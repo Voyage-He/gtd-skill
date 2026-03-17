@@ -1,0 +1,12 @@
+{
+  "name": "gtd",
+  "version": "1.0.0",
+  "description": "GTD 时间管理助手 — 基于 Getting Things Done 方法论，在 Claude Code 中维护 Markdown 格式的任务管理系统。支持收集、理清、组织、回顾、执行全流程。",
+  "author": {
+    "name": "Voyage"
+  },
+  "license": "MIT",
+  "keywords": ["gtd", "productivity", "task-management", "getting-things-done", "todo", "chinese"],
+  "homepage": "https://github.com/voyage/gtd-skill",
+  "repository": "https://github.com/voyage/gtd-skill"
+}

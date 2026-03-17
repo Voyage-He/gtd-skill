@@ -1,0 +1,8 @@
+name: gtd
+version: "1.0.0"
+description: >
+  GTD (Getting Things Done) 时间管理助手。
+  基于 David Allen 的 GTD 方法论，在 ~/gtd/ 维护一套 Markdown 格式的任务管理系统。
+  支持收集、理清、组织、回顾、执行全流程。
+  包含收件箱管理、项目追踪、下一步行动清单、等待清单、日历、周回顾等功能。
+requires_env: []

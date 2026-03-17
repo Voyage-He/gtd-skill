@@ -1,0 +1,18 @@
+{
+  "name": "gtd-skill-marketplace",
+  "description": "GTD 时间管理技能 — 基于 Getting Things Done 方法论的任务管理插件",
+  "owner": {
+    "name": "Voyage"
+  },
+  "plugins": [
+    {
+      "name": "gtd",
+      "version": "1.0.0",
+      "description": "GTD 时间管理助手 — 基于 Getting Things Done 方法论，在 Claude Code 中维护 Markdown 格式的任务管理系统。支持收集、理清、组织、回顾、执行全流程。",
+      "source": "./",
+      "author": {
+        "name": "Voyage"
+      }
+    }
+  ]
+}
