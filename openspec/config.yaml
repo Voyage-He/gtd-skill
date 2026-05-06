@@ -1,20 +1,20 @@
 schema: spec-driven
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  本项目的 OpenSpec artifacts 默认使用中文编写。
+  保留代码标识、命令、文件路径、API 名称、配置键和英文专有名词的原文。
+  面向 Hermes Agent、Codex/Claude skills 和 GTD Markdown 任务系统相关变更时，优先说明对用户工作流和插件兼容性的影响。
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+rules:
+  proposal:
+    - 使用中文撰写，除非引用代码标识、命令、路径或 API 名称。
+    - 清楚说明为什么要做、要改什么、涉及哪些 capability，以及影响范围。
+  specs:
+    - 使用中文撰写需求、场景和验收条件。
+    - capability 名称可使用英文 slug，但正文必须中文。
+  design:
+    - 使用中文记录技术决策、边界、风险和替代方案。
+    - 涉及代码或配置时写明具体文件路径。
+  tasks:
+    - 使用中文编写任务清单。
+    - 每个任务应足够小，可以独立验证，并尽量引用目标文件路径。
