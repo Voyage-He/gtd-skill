@@ -1,8 +1,23 @@
 name: gtd
-version: "1.0.0"
+version: "2.0.0"
 description: >
-  GTD (Getting Things Done) 时间管理助手。
-  基于 David Allen 的 GTD 方法论，在 ~/gtd/ 维护一套 Markdown 格式的任务管理系统。
-  支持收集、理清、组织、回顾、执行全流程。
-  包含收件箱管理、项目追踪、下一步行动清单、等待清单、日历、周回顾等功能。
-requires_env: []
+  Hermes Agent GTD plugin for capturing, organizing, reviewing, and completing
+  work in a Markdown-based Getting Things Done system.
+provides_tools:
+  - gtd_init
+  - gtd_capture
+  - gtd_inbox
+  - gtd_inbox_process
+  - gtd_next_number
+  - gtd_list_actions
+  - gtd_complete
+  - gtd_archive
+  - gtd_daily_check
+  - gtd_weekly_review
+  - gtd_stats
+  - gtd_config_get
+  - gtd_config_set
+requires_env:
+  - name: GTD_DIR
+    required: false
+    description: Optional GTD data directory. Defaults to ~/gtd when unset.

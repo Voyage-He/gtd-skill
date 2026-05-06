@@ -1,102 +1,125 @@
-# GTD Skill
+# Hermes Agent GTD Plugin
 
-基于 David Allen 的 [Getting Things Done](https://gettingthingsdone.com/) 方法论，为 Claude Code 打造的 GTD 时间管理插件。
+Hermes Agent GTD 插件基于 Getting Things Done 方法论，通过 13 个 `gtd_*` tools 维护一套 Markdown 任务系统。默认数据目录是 `~/gtd`，也可以用 `GTD_DIR` 指向其他目录。
 
 ## 安装
 
-### 通过 Marketplace 安装（推荐）
+### 用户级插件
 
 ```bash
-# 添加 marketplace
-claude plugin marketplace add https://github.com/voyage/gtd-skill
-
-# 安装插件
-claude plugin install gtd
+mkdir -p ~/.hermes/plugins
+cp -R /path/to/gtd-skill ~/.hermes/plugins/gtd
+hermes plugins enable gtd
 ```
 
-### 手动安装
+启动 Hermes 后，确认 `gtd` toolset 中可以看到 `gtd_init`、`gtd_capture` 等工具。
+
+### 项目本地插件
+
+项目本地插件位于当前项目的 `.hermes/plugins/`，只应在信任该项目内容时启用：
 
 ```bash
-# 克隆到 Claude Code skills 目录
-git clone https://github.com/voyage/gtd-skill.git ~/.claude/skills/gtd
+mkdir -p .hermes/plugins
+cp -R /path/to/gtd-skill .hermes/plugins/gtd
+export HERMES_ENABLE_PROJECT_PLUGINS=true
+hermes plugins enable gtd
 ```
 
-### 初始化 GTD 系统
+## 数据目录
 
-安装后，在 Claude Code 中直接说：
-
-> "初始化 GTD"
-
-Claude 会自动运行初始化脚本，在 `~/gtd/` 创建完整的任务管理系统。
-
-或者手动运行：
+默认使用 `~/gtd`。临时测试或多套系统可以这样指定目录：
 
 ```bash
-python ~/.claude/skills/gtd/scripts/init_gtd.py
+export GTD_DIR="/path/to/gtd"
 ```
 
-## 使用
+首次使用时让 Agent 执行“初始化 GTD”，插件会调用 `gtd_init` 幂等创建缺失文件，不会覆盖已有 Markdown 数据。
 
-安装后在 Claude Code 中直接用自然语言操作：
+## Tools
 
-| 你说 | Claude 做什么 |
-|------|-------------|
-| "记录买牛奶" | 写入收集箱 |
-| "整理收集箱" | 逐条引导你走决策树 |
-| "今天做什么" | 列出今日待办和紧急任务 |
-| "完成 N001" | 标记任务完成 |
-| "周回顾" | 创建回顾模板 + 自动统计数据 |
-| "查看统计" | 显示本周完成率和任务分布 |
+| Tool | 典型说法 | 关键参数 |
+|------|----------|----------|
+| `gtd_init` | 初始化 GTD | 无 |
+| `gtd_capture` | 记录买牛奶 | `content` |
+| `gtd_inbox` | 看看收集箱 | 无 |
+| `gtd_inbox_process` | 把第 1 条整理成下一步行动 | `index`, `target`, 可选 `context`, `deadline`, `delegate`, `estimated`, `project_name`, `first_action` |
+| `gtd_next_number` | 下一个项目编号 | `prefix`: `N`, `W`, `P` |
+| `gtd_list_actions` | 今天有什么下一步行动 | 可选 `context`, `show_all` |
+| `gtd_complete` | 完成 N001 | `number`: `N001`, `W001`, `P001` |
+| `gtd_archive` | 归档已完成任务 | 无 |
+| `gtd_daily_check` | 今天做什么 | 无 |
+| `gtd_weekly_review` | 做周回顾 | 无 |
+| `gtd_stats` | 查看统计 | 无 |
+| `gtd_config_get` | 查看配置 | 可选 `key` |
+| `gtd_config_set` | 修改回顾时间 | `key`, `value` |
 
-## GTD 文件结构
+`gtd_inbox_process` 的 `target` 支持：
 
+`trash`, `reference`, `someday_maybe`, `done`, `next_actions`, `waiting_for`, `projects`
+
+## JSON 返回
+
+所有 handler 都返回 JSON 字符串。成功结果包含 `ok: true` 和 `message`，失败结果包含 `ok: false`、`message` 和 `error`。
+
+```json
+{
+  "ok": true,
+  "message": "已记录: 买牛奶",
+  "content": "买牛奶",
+  "date": "2026-05-06",
+  "gtd_dir": "/Users/me/gtd"
+}
 ```
-~/gtd/
-├── inbox.md          # 收集箱 - 快速记录想法
-├── projects.md       # 项目清单 - 多步骤任务
-├── next_actions.md   # 下一步行动 - 可立即执行
-├── waiting_for.md    # 等待清单 - 等待他人/外部
-├── someday_maybe.md  # 将来/也许 - 暂不需要的想法
-├── calendar.md       # 日历 - 有截止时间的事项
-├── reference.md      # 参考资料
-├── config.yaml       # 用户配置
-├── archive/          # 归档目录
-└── reviews/          # 回顾记录
+
+```json
+{
+  "ok": false,
+  "message": "缺少必填参数: content",
+  "error": {
+    "type": "GTDValidationError",
+    "detail": "缺少必填参数: content"
+  }
+}
 ```
 
-### 自定义目录
+## 常见问题
 
-```bash
-export GTD_DIR="/path/to/your/gtd"
-```
+- 未初始化或文件缺失：调用 `gtd_init`。
+- 编号不存在：先调用 `gtd_list_actions` 或检查编号前缀，`gtd_complete` 支持 `N`、`W`、`P`。
+- 参数非法：查看返回里的 `message`，例如 `target` 必须是上面列出的枚举值，日期必须是 `YYYY-MM-DD`。
+- 工具返回 `ok: false`：Hermes 会话不会中断，按 `message` 修正参数后重试。
+- 配置文件：`PyYAML` 可选。安装后使用 `config.yaml`；未安装时使用 `config.json` fallback。
 
 ## 依赖
 
-- Python 3.7+
-- PyYAML >= 5.1（可选；未安装时配置系统回退到 JSON）
+运行时只依赖 Python 标准库。`PyYAML>=5.1` 是可选增强，用于以 YAML 格式读写配置；未安装时自动使用 JSON。
 
 ```bash
-pip install -r requirements.txt
+python3 -m pip install PyYAML>=5.1
 ```
 
-## 项目结构
+## 测试
 
+测试使用临时 `GTD_DIR`，不会读取或修改真实 `~/gtd`。
+
+```bash
+python3 -m unittest discover -s tests
 ```
-gtd-skill/
-├── .claude-plugin/
-│   ├── plugin.json          # 插件元数据
-│   └── marketplace.json     # Marketplace 注册
-├── .claude/
-│   └── skills/
-│       └── gtd/
-│           ├── SKILL.md     # 技能定义
-│           ├── references/  # 参考文档
-│           ├── assets/      # 模板文件
-│           └── scripts/     # Python 工具脚本
-├── README.md
-├── requirements.txt
-└── LICENSE
-```
+
+## 发布文件
+
+Hermes 插件最小发布目录应包含：
+
+- `plugin.yaml`
+- `__init__.py`
+- `schemas.py`
+- `tools.py`
+- `gtd_core.py`
+- `skills/gtd/SKILL.md`
+- `README.md`
+- `LICENSE`
+
+发布前确认没有 `.DS_Store`、`__pycache__/`、`*.pyc` 或测试缓存进入文件清单。
 
 ## 许可
 

@@ -1,1 +1,2 @@
-PyYAML>=5.1
+# No required runtime dependencies.
+# Optional: PyYAML>=5.1 enables YAML config files; without it the plugin uses JSON.

@@ -1,9 +1,9 @@
-"""GTD plugin tool JSON schemas for Hermes agent."""
+"""GTD plugin tool JSON schemas for Hermes Agent."""
 
 # ── gtd_init ──────────────────────────────────────────
 INIT = {
     "name": "gtd_init",
-    "description": "初始化 GTD 系统。在 ~/gtd/ 目录下创建完整的任务管理文件结构（收集箱、项目清单、下一步行动、等待清单、日历等）。首次使用时调用。",
+    "description": "初始化 GTD Markdown 文件结构。默认使用 ~/gtd，也可通过 GTD_DIR 指向其他目录。该操作幂等，不会覆盖已有用户数据。",
     "parameters": {
         "type": "object",
         "properties": {},
@@ -14,7 +14,7 @@ INIT = {
 # ── gtd_capture ───────────────────────────────────────
 CAPTURE = {
     "name": "gtd_capture",
-    "description": "快速记录一个想法或待办事项到 GTD 收集箱。适合随时捕捉闪现的想法，稍后统一整理。",
+    "description": "快速记录一个想法或待办事项到 GTD 收集箱，稍后统一整理。",
     "parameters": {
         "type": "object",
         "properties": {
@@ -61,6 +61,7 @@ INBOX_PROCESS = {
             },
             "deadline": {
                 "type": "string",
+                "format": "date",
                 "description": "截止日期 YYYY-MM-DD（仅 target=next_actions 时使用）",
             },
             "delegate": {
@@ -69,6 +70,7 @@ INBOX_PROCESS = {
             },
             "estimated": {
                 "type": "string",
+                "format": "date",
                 "description": "预计完成日期 YYYY-MM-DD（仅 target=waiting_for 时使用）",
             },
             "project_name": {
@@ -140,7 +142,7 @@ COMPLETE = {
 # ── gtd_archive ───────────────────────────────────────
 ARCHIVE = {
     "name": "gtd_archive",
-    "description": "归档所有已完成的任务。将标记为 [x] 的任务从活动文件中移除，存入 archive/ 目录。",
+    "description": "归档所有已完成的任务和项目。将已完成条目从活动文件中移除，存入 archive/ 目录，并保留未完成内容和备注。",
     "parameters": {
         "type": "object",
         "properties": {},
@@ -209,8 +211,8 @@ CONFIG_SET = {
                 "description": "配置键，如 user_name、review.day",
             },
             "value": {
-                "type": "string",
-                "description": "新值",
+                "type": ["string", "number", "boolean"],
+                "description": "新值。字符串 true/false、整数会在写入时转换为对应类型。",
             },
         },
         "required": ["key", "value"],
