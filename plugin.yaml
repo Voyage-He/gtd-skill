@@ -17,6 +17,11 @@ provides_tools:
   - gtd_stats
   - gtd_config_get
   - gtd_config_set
+  - gtd_reference_add
+  - gtd_reference_search
+  - gtd_reference_get
+  - gtd_reference_link
+  - gtd_reference_read
 requires_env:
   - name: GTD_DIR
     required: false

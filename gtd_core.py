@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import mimetypes
 import os
 import re
+import shutil
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -35,6 +38,14 @@ PREFIX_FILES = {
     "W": "waiting_for.md",
     "P": "projects.md",
 }
+
+REFERENCE_ID_RE = re.compile(r"^R\d{8}-\d{3}$")
+GTD_RELATED_ITEM_RE = re.compile(r"^[NWP]\d{3}$")
+REFERENCE_KINDS = {"memo", "link", "file"}
+REFERENCE_READ_POLICIES = {"metadata_only", "preview_allowed", "read_on_request"}
+REFERENCE_MANAGED_MODES = {"link", "copy"}
+REFERENCE_HASH_LIMIT_BYTES = 10 * 1024 * 1024
+REFERENCE_READ_LIMIT_CHARS = 4000
 
 DEFAULT_CONFIG = {
     "user_name": "用户",
@@ -108,6 +119,13 @@ def ensure_gtd_dir() -> Path:
     gtd_dir.mkdir(parents=True, exist_ok=True)
     (gtd_dir / "archive").mkdir(parents=True, exist_ok=True)
     (gtd_dir / "reviews").mkdir(parents=True, exist_ok=True)
+    references = gtd_dir / "references"
+    (references / "cards").mkdir(parents=True, exist_ok=True)
+    (references / "assets").mkdir(parents=True, exist_ok=True)
+    (references / "cache").mkdir(parents=True, exist_ok=True)
+    index = references / "index.jsonl"
+    if not index.exists():
+        write_text(index, "")
     return gtd_dir
 
 
@@ -432,6 +450,527 @@ def get_next_number(prefix: str) -> str:
 
 def _append_target(filename: str, text: str) -> None:
     append_text(gtd_path(filename), text)
+
+
+def reference_root() -> Path:
+    return get_gtd_dir() / "references"
+
+
+def reference_cards_dir() -> Path:
+    return reference_root() / "cards"
+
+
+def reference_assets_dir() -> Path:
+    return reference_root() / "assets"
+
+
+def reference_cache_dir() -> Path:
+    return reference_root() / "cache"
+
+
+def reference_index_path() -> Path:
+    return reference_root() / "index.jsonl"
+
+
+def _normalize_list(value: Any) -> list[str]:
+    if value is None or value == "":
+        return []
+    if isinstance(value, str):
+        return [part.strip() for part in re.split(r"[,，\n]", value) if part.strip()]
+    if isinstance(value, list):
+        return [str(part).strip() for part in value if str(part).strip()]
+    return [str(value).strip()]
+
+
+def _normalize_reference_id(reference_id: str) -> str:
+    normalized = (reference_id or "").strip().upper()
+    if not REFERENCE_ID_RE.fullmatch(normalized):
+        raise GTDValidationError("reference_id 必须类似 R20260507-001")
+    return normalized
+
+
+def _validate_related_item(item: str) -> str:
+    item = (item or "").strip()
+    upper = item.upper()
+    if GTD_RELATED_ITEM_RE.fullmatch(upper):
+        return upper
+    if item.startswith("inbox:") and len(item) > len("inbox:"):
+        return item
+    raise GTDValidationError("related_item 必须是 N001、W001、P001 或 inbox:<原文>")
+
+
+def _reference_card_path(reference_id: str) -> Path:
+    return reference_cards_dir() / f"{_normalize_reference_id(reference_id)}.md"
+
+
+def next_reference_id() -> str:
+    ensure_gtd_dir()
+    prefix = f"R{local_date().strftime('%Y%m%d')}"
+    existing: list[int] = []
+    for path in reference_cards_dir().glob(f"{prefix}-*.md"):
+        match = re.fullmatch(rf"{re.escape(prefix)}-(\d{{3}})\.md", path.name)
+        if match:
+            existing.append(int(match.group(1)))
+    return f"{prefix}-{(max(existing) + 1) if existing else 1:03d}"
+
+
+def _yaml_dump(data: dict[str, Any]) -> str:
+    yaml = _optional_yaml()
+    if yaml is not None:
+        return yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+    return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+def _yaml_load(text: str) -> dict[str, Any]:
+    yaml = _optional_yaml()
+    if yaml is not None:
+        loaded = yaml.safe_load(text) or {}
+    else:
+        loaded = json.loads(text or "{}")
+    if not isinstance(loaded, dict):
+        raise GTDValidationError("reference 资料卡 metadata 格式不正确")
+    return loaded
+
+
+def write_reference_card(data: dict[str, Any]) -> Path:
+    ensure_gtd_dir()
+    reference_id = _normalize_reference_id(data["reference_id"])
+    note = str(data.get("note", "")).strip()
+    metadata = dict(data)
+    metadata.pop("note", None)
+    content = f"---\n{_yaml_dump(metadata).rstrip()}\n---\n\n{note}\n"
+    path = _reference_card_path(reference_id)
+    write_text(path, content)
+    return path
+
+
+def read_reference_card(reference_id: str) -> dict[str, Any]:
+    path = _reference_card_path(reference_id)
+    if not path.exists():
+        raise GTDValidationError(f"未找到 reference: {_normalize_reference_id(reference_id)}")
+    content = read_text(path)
+    match = re.match(r"^---\n(.*?)\n---\n?(.*)$", content, flags=re.DOTALL)
+    if not match:
+        raise GTDValidationError(f"reference 资料卡格式不正确: {path.name}")
+    data = _yaml_load(match.group(1))
+    data["note"] = match.group(2).strip()
+    data["card_path"] = str(path)
+    return data
+
+
+def _reference_index_record(data: dict[str, Any]) -> dict[str, Any]:
+    attachment = data.get("attachment") or {}
+    searchable = [
+        data.get("reference_id", ""),
+        data.get("title", ""),
+        data.get("kind", ""),
+        data.get("source", ""),
+        data.get("purpose", ""),
+        data.get("project", ""),
+        data.get("captured_at", ""),
+        data.get("note", ""),
+        attachment.get("name", ""),
+        attachment.get("path", ""),
+        attachment.get("original_path", ""),
+    ]
+    for field in ("tags", "aliases", "people", "related_items"):
+        searchable.extend(_normalize_list(data.get(field)))
+    return {
+        "reference_id": data["reference_id"],
+        "title": data.get("title", ""),
+        "kind": data.get("kind", ""),
+        "source": data.get("source", ""),
+        "purpose": data.get("purpose", ""),
+        "captured_at": data.get("captured_at", ""),
+        "tags": _normalize_list(data.get("tags")),
+        "aliases": _normalize_list(data.get("aliases")),
+        "people": _normalize_list(data.get("people")),
+        "project": data.get("project", ""),
+        "related_items": _normalize_list(data.get("related_items")),
+        "summary": data.get("summary", ""),
+        "note": data.get("note", ""),
+        "attachment": attachment,
+        "search_text": " ".join(str(part).lower() for part in searchable if part),
+    }
+
+
+def _load_index_records() -> list[dict[str, Any]]:
+    ensure_gtd_dir()
+    records: list[dict[str, Any]] = []
+    path = reference_index_path()
+    if not path.exists():
+        rebuild_reference_index()
+        path = reference_index_path()
+    index_damaged = False
+    for line in read_text(path).splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            index_damaged = True
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+        else:
+            index_damaged = True
+    if index_damaged:
+        rebuild_reference_index()
+        return _load_index_records()
+    return records
+
+
+def write_reference_index(records: list[dict[str, Any]]) -> None:
+    lines = [json.dumps(record, ensure_ascii=False, sort_keys=True) for record in records]
+    write_text(reference_index_path(), ("\n".join(lines) + "\n") if lines else "")
+
+
+def upsert_reference_index(data: dict[str, Any]) -> None:
+    record = _reference_index_record(data)
+    records = _load_index_records()
+    if not records and any(reference_cards_dir().glob("R*.md")):
+        rebuild_reference_index()
+        records = _load_index_records()
+    records = [item for item in records if item.get("reference_id") != data["reference_id"]]
+    records.append(record)
+    records.sort(key=lambda item: item.get("reference_id", ""))
+    write_reference_index(records)
+
+
+def rebuild_reference_index() -> dict[str, Any]:
+    ensure_gtd_dir()
+    records: list[dict[str, Any]] = []
+    skipped: list[str] = []
+    for path in sorted(reference_cards_dir().glob("R*.md")):
+        try:
+            records.append(_reference_index_record(read_reference_card(path.stem)))
+        except GTDError:
+            skipped.append(path.name)
+    write_reference_index(records)
+    return {"indexed": len(records), "skipped": skipped, "index_file": str(reference_index_path())}
+
+
+def sanitize_filename_part(value: str, fallback: str = "未命名") -> str:
+    text = (value or "").strip() or fallback
+    text = re.sub(r"[\\/:*?\"<>|#\[\]\n\r\t]+", "_", text)
+    text = re.sub(r"\s+", "_", text)
+    text = re.sub(r"_+", "_", text).strip("._ ")
+    return text[:80] or fallback
+
+
+def suggest_reference_filename(
+    reference_id: str,
+    title: str,
+    *,
+    purpose: str = "",
+    source: str = "",
+    owner: str = "",
+    version: str = "v1",
+    extension: str = "",
+) -> str:
+    reference_id = _normalize_reference_id(reference_id)
+    subject = sanitize_filename_part(title, "资料")
+    purpose_part = sanitize_filename_part(purpose, "")
+    source_part = sanitize_filename_part(owner or source, "")
+    version_part = sanitize_filename_part(version or "v1", "v1")
+    subject_part = f"{subject}_{purpose_part}" if purpose_part else subject
+    stem_parts = [reference_id, subject_part]
+    if source_part:
+        stem_parts.append(source_part)
+    if version_part:
+        stem_parts.append(version_part)
+    ext = extension if extension.startswith(".") or not extension else f".{extension}"
+    ext = re.sub(r"[^A-Za-z0-9.]", "", ext)
+    return "__".join(stem_parts) + ext
+
+
+def _infer_kind(kind: str = "", url: str = "", file_path: str = "") -> str:
+    if kind:
+        kind = kind.strip().lower()
+        if kind not in REFERENCE_KINDS:
+            raise GTDValidationError("kind 必须是 memo、link 或 file")
+        return kind
+    if file_path:
+        return "file"
+    if url:
+        return "link"
+    return "memo"
+
+
+def _sha256_if_small(path: Path) -> tuple[str, str]:
+    size = path.stat().st_size
+    if size > REFERENCE_HASH_LIMIT_BYTES:
+        return "", "skipped_large_file"
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest(), "computed"
+
+
+def _build_attachment(
+    reference_id: str,
+    file_path: str,
+    *,
+    managed: str = "link",
+    title: str = "",
+    purpose: str = "",
+    source: str = "",
+    owner: str = "",
+    version: str = "v1",
+) -> tuple[dict[str, Any], str]:
+    managed = (managed or "link").strip().lower()
+    if managed not in REFERENCE_MANAGED_MODES:
+        raise GTDValidationError("managed 必须是 link 或 copy")
+    source_path = Path(os.path.expanduser(file_path)).resolve()
+    if not source_path.exists() or not source_path.is_file():
+        raise GTDValidationError(f"附件不存在或不是文件: {file_path}")
+
+    ext = source_path.suffix
+    suggested_name = suggest_reference_filename(
+        reference_id,
+        title or source_path.stem,
+        purpose=purpose,
+        source=source,
+        owner=owner,
+        version=version,
+        extension=ext,
+    )
+    stored_path = source_path
+    if managed == "copy":
+        target_dir = reference_assets_dir() / today_str()[:4] / today_str()[5:7]
+        target_dir.mkdir(parents=True, exist_ok=True)
+        stored_path = target_dir / suggested_name
+        if stored_path.resolve() != source_path:
+            shutil.copy2(source_path, stored_path)
+
+    sha256, hash_status = _sha256_if_small(source_path)
+    mime, _ = mimetypes.guess_type(str(source_path))
+    attachment = {
+        "original_path": str(source_path),
+        "path": str(stored_path),
+        "name": stored_path.name,
+        "original_name": source_path.name,
+        "suggested_name": suggested_name,
+        "size": source_path.stat().st_size,
+        "mime": mime or "application/octet-stream",
+        "ext": ext,
+        "managed": managed,
+        "sha256": sha256,
+        "hash_status": hash_status,
+    }
+    return attachment, suggested_name
+
+
+def add_reference(
+    *,
+    title: str = "",
+    note: str = "",
+    kind: str = "",
+    url: str = "",
+    file_path: str = "",
+    tags: Any = None,
+    aliases: Any = None,
+    people: Any = None,
+    project: str = "",
+    related_items: Any = None,
+    purpose: str = "",
+    source: str = "",
+    owner: str = "",
+    version: str = "v1",
+    read_policy: str = "metadata_only",
+    managed: str = "link",
+) -> dict[str, Any]:
+    title = (title or "").strip()
+    note = (note or "").strip()
+    url = (url or "").strip()
+    file_path = (file_path or "").strip()
+    purpose = (purpose or "").strip()
+    kind = _infer_kind(kind, url, file_path)
+    if not (title or note or url or file_path):
+        raise GTDValidationError("reference 至少需要 title、note、url 或 file_path 之一")
+    if read_policy not in REFERENCE_READ_POLICIES:
+        raise GTDValidationError("read_policy 必须是 metadata_only、preview_allowed 或 read_on_request")
+    if kind == "file" and not file_path:
+        raise GTDValidationError("kind=file 时必须提供 file_path")
+    if kind == "link" and not url:
+        raise GTDValidationError("kind=link 时必须提供 url")
+
+    ensure_gtd_dir()
+    reference_id = next_reference_id()
+    related = [_validate_related_item(item) for item in _normalize_list(related_items)]
+    attachment: dict[str, Any] = {}
+    suggested_name = ""
+    if file_path:
+        attachment, suggested_name = _build_attachment(
+            reference_id,
+            file_path,
+            managed=managed,
+            title=title,
+            purpose=purpose,
+            source=source,
+            owner=owner,
+            version=version,
+        )
+    elif title:
+        suggested_name = suggest_reference_filename(
+            reference_id,
+            title,
+            purpose=purpose,
+            source=source,
+            owner=owner,
+            version=version,
+        )
+
+    data = {
+        "reference_id": reference_id,
+        "title": title or note[:50] or url or (attachment.get("original_name") or "未命名资料"),
+        "kind": kind,
+        "source": source,
+        "purpose": purpose,
+        "captured_at": now_str(),
+        "tags": _normalize_list(tags),
+        "aliases": _normalize_list(aliases),
+        "people": _normalize_list(people),
+        "project": (project or "").strip(),
+        "related_items": related,
+        "read_policy": read_policy,
+        "url": url,
+        "attachment": attachment,
+        "summary": note[:160],
+        "suggested_name": suggested_name,
+        "note": note,
+    }
+    card_path = write_reference_card(data)
+    upsert_reference_index(data)
+    return {"reference_id": reference_id, "card_path": str(card_path), "suggested_name": suggested_name, **data}
+
+
+def get_reference(reference_id: str) -> dict[str, Any]:
+    return read_reference_card(reference_id)
+
+
+def search_references(query: str = "", *, related_item: str = "", limit: int = 10) -> dict[str, Any]:
+    ensure_gtd_dir()
+    if not reference_index_path().exists():
+        rebuild_reference_index()
+    query = (query or "").strip().lower()
+    related = _validate_related_item(related_item) if related_item else ""
+    limit = max(1, min(int(limit or 10), 50))
+    results: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    records = _load_index_records()
+    if not records and any(reference_cards_dir().glob("R*.md")):
+        rebuild_reference_index()
+        records = _load_index_records()
+
+    for record in records:
+        match_fields: list[str] = []
+        if related and related in _normalize_list(record.get("related_items")):
+            match_fields.append("related_items")
+        if query:
+            field_values = {
+                "title": record.get("title", ""),
+                "kind": record.get("kind", ""),
+                "source": record.get("source", ""),
+                "purpose": record.get("purpose", ""),
+                "captured_at": record.get("captured_at", ""),
+                "project": record.get("project", ""),
+                "tags": " ".join(_normalize_list(record.get("tags"))),
+                "aliases": " ".join(_normalize_list(record.get("aliases"))),
+                "people": " ".join(_normalize_list(record.get("people"))),
+                "related_items": " ".join(_normalize_list(record.get("related_items"))),
+                "note": record.get("note", ""),
+                "attachment": " ".join(
+                    str(record.get("attachment", {}).get(key, "")) for key in ("name", "path", "original_path")
+                ),
+            }
+            for field, value in field_values.items():
+                if query in str(value).lower():
+                    match_fields.append(field)
+        if (query or related) and not match_fields:
+            continue
+        card_path = _reference_card_path(record["reference_id"])
+        if not card_path.exists():
+            warnings.append(f"索引记录缺少资料卡: {record['reference_id']}")
+            continue
+        results.append(
+            {
+                "reference_id": record["reference_id"],
+                "title": record.get("title", ""),
+                "kind": record.get("kind", ""),
+                "source": record.get("source", ""),
+                "purpose": record.get("purpose", ""),
+                "captured_at": record.get("captured_at", ""),
+                "tags": record.get("tags", []),
+                "aliases": record.get("aliases", []),
+                "people": record.get("people", []),
+                "project": record.get("project", ""),
+                "related_items": record.get("related_items", []),
+                "note": record.get("note", ""),
+                "attachment": record.get("attachment", {}),
+                "match_fields": sorted(set(match_fields)) or ["all"],
+            }
+        )
+        if len(results) >= limit:
+            break
+    return {"results": results, "count": len(results), "warnings": warnings, "metadata_only": True}
+
+
+def link_reference(reference_id: str, related_item: str) -> dict[str, Any]:
+    related_item = _validate_related_item(related_item)
+    data = read_reference_card(reference_id)
+    related = _normalize_list(data.get("related_items"))
+    if related_item not in related:
+        related.append(related_item)
+    data["related_items"] = related
+    card_path = write_reference_card(data)
+    upsert_reference_index(data)
+    return {"reference_id": data["reference_id"], "related_items": related, "card_path": str(card_path)}
+
+
+def _reference_read_range(read_chars: int, total_chars: int) -> dict[str, int | str]:
+    return {"unit": "chars", "start": 0, "end": read_chars, "total": total_chars}
+
+
+def read_reference(reference_id: str, *, max_chars: int = REFERENCE_READ_LIMIT_CHARS) -> dict[str, Any]:
+    data = read_reference_card(reference_id)
+    max_chars = max(1, min(int(max_chars or REFERENCE_READ_LIMIT_CHARS), 20000))
+    attachment = data.get("attachment") or {}
+    if not attachment:
+        note = data.get("note", "")
+        read_chars = min(len(note), max_chars)
+        return {
+            "reference_id": data["reference_id"],
+            "content": note[:max_chars],
+            "source": "note",
+            "truncated": len(note) > max_chars,
+            "range": _reference_read_range(read_chars, len(note)),
+            "read_chars": read_chars,
+            "total_chars": len(note),
+        }
+    path = Path(attachment.get("path") or attachment.get("original_path") or "")
+    if not path.exists() or not path.is_file():
+        raise GTDValidationError(f"附件不存在或无法读取: {path}")
+    try:
+        content = path.read_text(encoding="utf-8")
+        encoding = "utf-8"
+    except UnicodeDecodeError as exc:
+        raise GTDValidationError("附件不是可直接读取的 UTF-8 文本文件") from exc
+    truncated = len(content) > max_chars
+    read_chars = min(len(content), max_chars)
+    return {
+        "reference_id": data["reference_id"],
+        "content": content[:max_chars],
+        "source": "attachment",
+        "file_path": str(path),
+        "mime": attachment.get("mime", ""),
+        "encoding": encoding,
+        "truncated": truncated,
+        "range": _reference_read_range(read_chars, len(content)),
+        "read_chars": read_chars,
+        "total_chars": len(content),
+    }
 
 
 def process_inbox(

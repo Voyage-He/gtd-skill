@@ -219,6 +219,98 @@ CONFIG_SET = {
     },
 }
 
+# ── gtd_reference_add ─────────────────────────────────
+REFERENCE_ADD = {
+    "name": "gtd_reference_add",
+    "description": "新增 GTD reference 资料卡，可登记纯备忘、链接或本地文件附件。默认只读取文件元数据，不解析附件正文。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "title": {"type": "string", "description": "资料标题。可留空但必须提供 note、url 或 file_path 之一。"},
+            "note": {"type": "string", "description": "短备注或备忘内容，作为 metadata-first 召回依据。"},
+            "kind": {"type": "string", "enum": ["memo", "link", "file"], "description": "资料类型。留空时从 url 或 file_path 推断。"},
+            "url": {"type": "string", "description": "链接资料的 URL。工具不会主动抓取远程页面内容。"},
+            "file_path": {"type": "string", "description": "本地附件路径。工具默认只登记文件元数据，不读取正文。"},
+            "tags": {"type": ["string", "array"], "description": "标签，可传逗号分隔字符串或字符串数组。"},
+            "aliases": {"type": ["string", "array"], "description": "别名，可传逗号分隔字符串或字符串数组。"},
+            "people": {"type": ["string", "array"], "description": "相关人员，可传逗号分隔字符串或字符串数组。"},
+            "project": {"type": "string", "description": "相关项目名称或编号。"},
+            "related_items": {"type": ["string", "array"], "description": "关联 GTD 编号，如 N001、W001、P001，或 inbox:<原文>。"},
+            "purpose": {"type": "string", "description": "文件或资料用途，用于生成包含主题和用途的命名建议。"},
+            "source": {"type": "string", "description": "资料来源，如 企业微信、邮件、张三。"},
+            "owner": {"type": "string", "description": "责任人或文件提供者，用于命名建议。"},
+            "version": {"type": "string", "description": "版本标识，默认 v1。"},
+            "read_policy": {
+                "type": "string",
+                "enum": ["metadata_only", "preview_allowed", "read_on_request"],
+                "description": "读取策略，默认 metadata_only。",
+            },
+            "managed": {
+                "type": "string",
+                "enum": ["link", "copy"],
+                "description": "附件托管策略。link 只保存原路径；copy 复制到 references/assets/。",
+            },
+        },
+        "required": [],
+    },
+}
+
+# ── gtd_reference_search ──────────────────────────────
+REFERENCE_SEARCH = {
+    "name": "gtd_reference_search",
+    "description": "按 metadata 和短备注搜索 GTD reference；不会读取、解析或摘要附件正文。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "搜索关键词。"},
+            "related_item": {"type": "string", "description": "按关联编号过滤，如 P003、N014、W002。"},
+            "limit": {"type": "integer", "description": "最多返回条数，默认 10，最大 50。"},
+        },
+        "required": [],
+    },
+}
+
+# ── gtd_reference_get ─────────────────────────────────
+REFERENCE_GET = {
+    "name": "gtd_reference_get",
+    "description": "查看单条 GTD reference 资料卡 metadata 和附件元数据；不会读取附件正文。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "reference_id": {"type": "string", "description": "资料编号，如 R20260507-001。"},
+        },
+        "required": ["reference_id"],
+    },
+}
+
+# ── gtd_reference_link ────────────────────────────────
+REFERENCE_LINK = {
+    "name": "gtd_reference_link",
+    "description": "将 GTD reference 与 N/W/P 编号或 inbox 原文建立关联；不会读取附件正文。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "reference_id": {"type": "string", "description": "资料编号，如 R20260507-001。"},
+            "related_item": {"type": "string", "description": "关联对象，如 N001、W001、P001 或 inbox:<原文>。"},
+        },
+        "required": ["reference_id", "related_item"],
+    },
+}
+
+# ── gtd_reference_read ────────────────────────────────
+REFERENCE_READ = {
+    "name": "gtd_reference_read",
+    "description": "显式读取 GTD reference 的备注或文本附件内容，并返回读取范围和截断信息。只有用户明确要求读取、总结、预览或抽取内容时才使用。",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "reference_id": {"type": "string", "description": "资料编号，如 R20260507-001。"},
+            "max_chars": {"type": "integer", "description": "最多读取字符数，默认 4000，最大 20000。"},
+        },
+        "required": ["reference_id"],
+    },
+}
+
 
 # ── All schemas ───────────────────────────────────────
 ALL_SCHEMAS = [
@@ -235,4 +327,9 @@ ALL_SCHEMAS = [
     STATS,
     CONFIG_GET,
     CONFIG_SET,
+    REFERENCE_ADD,
+    REFERENCE_SEARCH,
+    REFERENCE_GET,
+    REFERENCE_LINK,
+    REFERENCE_READ,
 ]

@@ -40,7 +40,7 @@ class PluginRuntimeTests(unittest.TestCase):
         load_plugin_module().register(ctx)
 
         schema_names = [schema["name"] for schema in schemas.ALL_SCHEMAS]
-        self.assertEqual(len(ctx.tools), 13)
+        self.assertEqual(len(ctx.tools), len(schemas.ALL_SCHEMAS))
         self.assertEqual([tool["name"] for tool in ctx.tools], schema_names)
         self.assertTrue(all(tool["toolset"] == "gtd" for tool in ctx.tools))
         self.assertTrue(all(tool["schema"]["name"] in tools.HANDLERS for tool in ctx.tools))
@@ -58,6 +58,28 @@ class PluginRuntimeTests(unittest.TestCase):
             with self.subTest(schema=schema["name"]):
                 self.assertIn(schema["name"], tools.HANDLERS)
                 self.assertEqual(schema["parameters"]["type"], "object")
+
+    def test_reference_schemas_have_handlers_and_metadata_only_descriptions(self):
+        reference_names = [schema["name"] for schema in schemas.ALL_SCHEMAS if schema["name"].startswith("gtd_reference_")]
+
+        self.assertEqual(
+            reference_names,
+            [
+                "gtd_reference_add",
+                "gtd_reference_search",
+                "gtd_reference_get",
+                "gtd_reference_link",
+                "gtd_reference_read",
+            ],
+        )
+        for name in reference_names:
+            with self.subTest(schema=name):
+                self.assertIn(name, tools.HANDLERS)
+
+        descriptions = {schema["name"]: schema["description"] for schema in schemas.ALL_SCHEMAS}
+        self.assertIn("不会读取", descriptions["gtd_reference_search"])
+        self.assertIn("不会读取", descriptions["gtd_reference_get"])
+        self.assertIn("不会读取", descriptions["gtd_reference_link"])
 
     def test_handlers_accept_kwargs_and_return_json_on_missing_args(self):
         for name, handler in tools.HANDLERS.items():

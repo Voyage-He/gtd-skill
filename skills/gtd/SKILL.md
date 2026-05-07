@@ -22,6 +22,11 @@ Use the registered `gtd_*` tools first for all GTD operations. Do not ask the us
 - Stats: call `gtd_stats`.
 - Read config: call `gtd_config_get`, optionally with `key`.
 - Update config: call `gtd_config_set` with `key` and `value`.
+- Add reference material, a work memo, a link, or a file attachment: call `gtd_reference_add`.
+- Search reference material: call `gtd_reference_search`.
+- View a reference card: call `gtd_reference_get`.
+- Link a reference to a GTD item: call `gtd_reference_link`.
+- Read reference content: call `gtd_reference_read` only when the user explicitly asks to open, read, preview, summarize, or extract content.
 
 ## Natural Language Examples
 
@@ -32,6 +37,33 @@ Use the registered `gtd_*` tools first for all GTD operations. Do not ask the us
 - "完成 N001": call `gtd_complete` with `{"number": "N001"}`.
 - "查看统计": call `gtd_stats`.
 - "把回顾时间改成周五晚上八点": call `gtd_config_set` for `review.day` and `review.time`, then verify with `gtd_config_get`.
+- "把客户A合同表登记成参考资料": call `gtd_reference_add` with `title`, `file_path`, `source`, optional `purpose`, and optional `tags`.
+- "找一下客户A二期资料": call `gtd_reference_search`; summarize metadata matches and do not read attachments.
+- "把 R20260507-001 关联到 P003": call `gtd_reference_link`.
+- "打开 R20260507-001 并总结": call `gtd_reference_read`, then answer from the returned content.
+
+## Reference Material
+
+Use Reference Registry for work facts, project context, group-chat notes, links, and file attachments that may need later recall. Prefer `gtd_reference_add` when the user says "记一条资料", "登记这个文件", "这个以后要用", or records a project-specific memo.
+
+Reference tools are metadata-first:
+
+- `gtd_reference_search`, `gtd_reference_get`, and `gtd_reference_link` must not be treated as permission to read attachment contents.
+- When search returns a file attachment, show the reference ID, title, source, date, filename/path, tags, and match fields.
+- Call `gtd_reference_read` only after the user explicitly asks to read, open, preview, summarize, compare, or extract content from a reference.
+
+For file attachments:
+
+- Use `managed: "link"` by default to keep the original file in place.
+- Use `managed: "copy"` only when the user wants the file copied into the GTD reference library.
+- Return or mention the suggested filename when useful; it follows the reference ID, subject, purpose, source or owner, and version.
+
+Reference memo vs Hermes memory:
+
+- GTD reference is for work material: project facts, customer notes, group-chat decisions, file indexes, and temporary context.
+- Hermes memory is for stable cross-project preferences, identity, and long-term habits.
+- If the user asks to remember a work fact such as "客户A周五前确认付款条款", use `gtd_reference_add` with `kind: "memo"`.
+- If the user asks to remember a durable preference such as "以后周报默认中文简洁格式", that may belong in Hermes memory instead of GTD reference.
 
 ## Inbox Processing
 

@@ -51,6 +51,10 @@ def _type_matches(value: Any, expected: str | list[str]) -> bool:
             return True
         if expected_type == "number" and isinstance(value, (int, float)) and not isinstance(value, bool):
             return True
+        if expected_type == "array" and isinstance(value, list):
+            return True
+        if expected_type == "object" and isinstance(value, dict):
+            return True
     return False
 
 
@@ -274,6 +278,67 @@ def handle_config_set(args: dict[str, Any] | None = None, **kwargs: Any) -> str:
     )
 
 
+def handle_reference_add(args: dict[str, Any] | None = None, **kwargs: Any) -> str:
+    def operation(data: dict[str, Any]) -> dict[str, Any]:
+        result = core.add_reference(
+            title=data.get("title", ""),
+            note=data.get("note", ""),
+            kind=data.get("kind", ""),
+            url=data.get("url", ""),
+            file_path=data.get("file_path", ""),
+            tags=data.get("tags"),
+            aliases=data.get("aliases"),
+            people=data.get("people"),
+            project=data.get("project", ""),
+            related_items=data.get("related_items"),
+            purpose=data.get("purpose", ""),
+            source=data.get("source", ""),
+            owner=data.get("owner", ""),
+            version=data.get("version", "v1"),
+            read_policy=data.get("read_policy", "metadata_only"),
+            managed=data.get("managed", "link"),
+        )
+        return {"message": f"已新增参考资料: {result['reference_id']} {result['title']}", **result}
+
+    return _run("gtd_reference_add", args, operation)
+
+
+def handle_reference_search(args: dict[str, Any] | None = None, **kwargs: Any) -> str:
+    def operation(data: dict[str, Any]) -> dict[str, Any]:
+        result = core.search_references(
+            data.get("query", ""),
+            related_item=data.get("related_item", ""),
+            limit=data.get("limit", 10),
+        )
+        return {"message": f"找到 {result['count']} 条参考资料", **result}
+
+    return _run("gtd_reference_search", args, operation)
+
+
+def handle_reference_get(args: dict[str, Any] | None = None, **kwargs: Any) -> str:
+    def operation(data: dict[str, Any]) -> dict[str, Any]:
+        result = core.get_reference(data["reference_id"])
+        return {"message": f"参考资料: {result['reference_id']} {result.get('title', '')}", **result}
+
+    return _run("gtd_reference_get", args, operation)
+
+
+def handle_reference_link(args: dict[str, Any] | None = None, **kwargs: Any) -> str:
+    def operation(data: dict[str, Any]) -> dict[str, Any]:
+        result = core.link_reference(data["reference_id"], data["related_item"])
+        return {"message": f"已关联 {result['reference_id']} -> {data['related_item']}", **result}
+
+    return _run("gtd_reference_link", args, operation)
+
+
+def handle_reference_read(args: dict[str, Any] | None = None, **kwargs: Any) -> str:
+    def operation(data: dict[str, Any]) -> dict[str, Any]:
+        result = core.read_reference(data["reference_id"], max_chars=data.get("max_chars", core.REFERENCE_READ_LIMIT_CHARS))
+        return {"message": f"已读取参考资料: {result['reference_id']}", **result}
+
+    return _run("gtd_reference_read", args, operation)
+
+
 HANDLERS = {
     "gtd_init": handle_init,
     "gtd_capture": handle_capture,
@@ -288,4 +353,9 @@ HANDLERS = {
     "gtd_stats": handle_stats,
     "gtd_config_get": handle_config_get,
     "gtd_config_set": handle_config_set,
+    "gtd_reference_add": handle_reference_add,
+    "gtd_reference_search": handle_reference_search,
+    "gtd_reference_get": handle_reference_get,
+    "gtd_reference_link": handle_reference_link,
+    "gtd_reference_read": handle_reference_read,
 }
