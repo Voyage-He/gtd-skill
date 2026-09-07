@@ -8,6 +8,11 @@ import mimetypes
 import os
 import re
 import shutil
+from functools import wraps
+try:
+    from . import storage
+except ImportError:
+    import storage
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -39,8 +44,8 @@ PREFIX_FILES = {
     "P": "projects.md",
 }
 
-REFERENCE_ID_RE = re.compile(r"^R\d{8}-\d{3}$")
-GTD_RELATED_ITEM_RE = re.compile(r"^[NWP]\d{3}$")
+REFERENCE_ID_RE = re.compile(r"^R\d{8}-\d{3,}$")
+GTD_RELATED_ITEM_RE = re.compile(r"^[NWP]\d{3,}$")
 REFERENCE_KINDS = {"memo", "link", "file"}
 REFERENCE_READ_POLICIES = {"metadata_only", "preview_allowed", "read_on_request"}
 REFERENCE_MANAGED_MODES = {"link", "copy"}
@@ -83,14 +88,18 @@ def local_date() -> date:
     override = os.environ.get("GTD_TODAY")
     if override:
         return datetime.strptime(override, "%Y-%m-%d").date()
-    return date.today()
+    return local_datetime().date()
 
 
 def local_datetime() -> datetime:
     override = os.environ.get("GTD_NOW")
     if override:
         return datetime.strptime(override, "%Y-%m-%d %H:%M")
-    return datetime.now()
+    try:
+        from hermes_time import now
+    except ImportError:
+        return datetime.now()
+    return now()
 
 
 def today_str() -> str:
@@ -109,6 +118,8 @@ def validate_date(value: str, field_name: str = "date") -> None:
     if not value:
         return
     try:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            raise ValueError("invalid date shape")
         datetime.strptime(value, "%Y-%m-%d")
     except ValueError as exc:
         raise GTDValidationError(f"{field_name} 必须使用 YYYY-MM-DD 格式") from exc
@@ -136,20 +147,13 @@ def read_text(path: Path) -> str:
 
 
 def write_text(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_name(f".{path.name}.tmp")
-    temp_path.write_text(content, encoding="utf-8")
-    temp_path.replace(path)
+    storage.track(path)
+    storage.atomic_bytes(path, content.encode("utf-8"))
 
 
 def append_text(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if not path.exists():
-        write_text(path, "# GTD\n\n")
-    with path.open("a", encoding="utf-8") as f:
-        f.write(text)
-        if not text.endswith("\n"):
-            f.write("\n")
+    existing = read_text(path) if path.exists() else "# GTD\n\n"
+    write_text(path, existing + text + ("" if text.endswith("\n") else "\n"))
 
 
 def _without_code_fences(content: str) -> str:
@@ -379,6 +383,11 @@ def capture(content: str) -> dict[str, Any]:
     if f"## {today}" not in existing:
         entry_prefix += f"\n## {today}\n\n"
     entry = f"{entry_prefix}- [ ] {content} (added: {today} {time_str()})\n"
+    events_path = gtd_path("captures.jsonl")
+    if not events_path.exists():
+        legacy = [{"date": parse_date_field(line, "added")} for line in existing.splitlines() if line.startswith("- [ ]") and parse_date_field(line, "added")]
+        write_text(events_path, "".join(json.dumps(item) + "\n" for item in legacy))
+    append_text(events_path, json.dumps({"date": today, "content": content}, ensure_ascii=False))
     append_text(inbox, entry)
     return {"content": content, "date": today, "gtd_dir": str(get_gtd_dir())}
 
@@ -443,9 +452,27 @@ def get_next_number(prefix: str) -> str:
     if filename is None:
         raise GTDValidationError("prefix 必须是 N、W 或 P")
 
-    content = read_text(gtd_path(filename))
-    existing = [int(n) for n in re.findall(rf"\b{prefix}(\d{{3}})\b", content)]
-    return f"{prefix}{(max(existing) + 1) if existing else 1:03d}"
+    content = read_text(gtd_path(filename)) + "\n" + archive_content()
+    existing = [int(n) for n in re.findall(rf"\b{prefix}(\d{{3,}})\b", content)]
+    counters = json.loads(read_text(gtd_path("sequences.json")) or "{}")
+    return f"{prefix}{max(existing + [int(counters.get(prefix, 0))]) + 1:03d}"
+
+
+def reserve_number(prefix: str) -> str:
+    number = get_next_number(prefix)
+    counters = json.loads(read_text(gtd_path("sequences.json")) or "{}")
+    counters[prefix] = int(number[1:])
+    write_text(gtd_path("sequences.json"), json.dumps(counters))
+    return number
+
+
+def archive_content() -> str:
+    return "\n".join(read_text(path) for path in sorted(gtd_path("archive").rglob("*.md")))
+
+
+def normalized_archive() -> str:
+    return re.sub(r"^(?:next_actions|waiting_for|projects)\.md: ", "", archive_content(), flags=re.MULTILINE)
+
 
 
 def _append_target(filename: str, text: str) -> None:
@@ -508,16 +535,13 @@ def next_reference_id() -> str:
     prefix = f"R{local_date().strftime('%Y%m%d')}"
     existing: list[int] = []
     for path in reference_cards_dir().glob(f"{prefix}-*.md"):
-        match = re.fullmatch(rf"{re.escape(prefix)}-(\d{{3}})\.md", path.name)
+        match = re.fullmatch(rf"{re.escape(prefix)}-(\d{{3,}})\.md", path.name)
         if match:
             existing.append(int(match.group(1)))
     return f"{prefix}-{(max(existing) + 1) if existing else 1:03d}"
 
 
 def _yaml_dump(data: dict[str, Any]) -> str:
-    yaml = _optional_yaml()
-    if yaml is not None:
-        return yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
@@ -526,7 +550,10 @@ def _yaml_load(text: str) -> dict[str, Any]:
     if yaml is not None:
         loaded = yaml.safe_load(text) or {}
     else:
-        loaded = json.loads(text or "{}")
+        try:
+            loaded = json.loads(text or "{}")
+        except json.JSONDecodeError as exc:
+            raise GTDValidationError("旧 YAML 资料卡需要安装 PyYAML 才能读取") from exc
     if not isinstance(loaded, dict):
         raise GTDValidationError("reference 资料卡 metadata 格式不正确")
     return loaded
@@ -553,6 +580,8 @@ def read_reference_card(reference_id: str) -> dict[str, Any]:
     if not match:
         raise GTDValidationError(f"reference 资料卡格式不正确: {path.name}")
     data = _yaml_load(match.group(1))
+    if data.get("reference_id") != path.stem:
+        raise GTDValidationError(f"资料卡编号与文件名不一致: {path.name}")
     data["note"] = match.group(2).strip()
     data["card_path"] = str(path)
     return data
@@ -590,6 +619,12 @@ def _reference_index_record(data: dict[str, Any]) -> dict[str, Any]:
         "summary": data.get("summary", ""),
         "note": data.get("note", ""),
         "attachment": attachment,
+        "attachments": data.get("attachments", [attachment] if attachment else []),
+        "origin": data.get("origin", {}),
+        "message_text": data.get("message_text", ""),
+        "messages": data.get("messages", []),
+        "extracted_text": data.get("extracted_text", ""),
+        "url": data.get("url", ""),
         "search_text": " ".join(str(part).lower() for part in searchable if part),
     }
 
@@ -610,7 +645,7 @@ def _load_index_records() -> list[dict[str, Any]]:
         except json.JSONDecodeError:
             index_damaged = True
             continue
-        if isinstance(record, dict):
+        if isinstance(record, dict) and REFERENCE_ID_RE.fullmatch(str(record.get("reference_id", ""))):
             records.append(record)
         else:
             index_damaged = True
@@ -644,7 +679,7 @@ def rebuild_reference_index() -> dict[str, Any]:
     for path in sorted(reference_cards_dir().glob("R*.md")):
         try:
             records.append(_reference_index_record(read_reference_card(path.stem)))
-        except GTDError:
+        except (GTDError, ValueError, TypeError, KeyError):
             skipped.append(path.name)
     write_reference_index(records)
     return {"indexed": len(records), "skipped": skipped, "index_file": str(reference_index_path())}
@@ -681,7 +716,11 @@ def suggest_reference_filename(
         stem_parts.append(version_part)
     ext = extension if extension.startswith(".") or not extension else f".{extension}"
     ext = re.sub(r"[^A-Za-z0-9.]", "", ext)
-    return "__".join(stem_parts) + ext
+    stem = "__".join(stem_parts)
+    budget = 240 - len(ext.encode("utf-8"))
+    while len(stem.encode("utf-8")) > budget:
+        stem = stem[:-1]
+    return stem + ext
 
 
 def _infer_kind(kind: str = "", url: str = "", file_path: str = "") -> str:
@@ -742,7 +781,13 @@ def _build_attachment(
         target_dir.mkdir(parents=True, exist_ok=True)
         stored_path = target_dir / suggested_name
         if stored_path.resolve() != source_path:
+            if stored_path.exists():
+                raise GTDValidationError(f"附件目标已存在: {stored_path.name}")
+            storage.track(stored_path)
             shutil.copy2(source_path, stored_path)
+            with stored_path.open("rb") as stream:
+                os.fsync(stream.fileno())
+            storage.sync_dir(stored_path.parent)
 
     sha256, hash_status = _sha256_if_small(source_path)
     mime, _ = mimetypes.guess_type(str(source_path))
@@ -866,10 +911,17 @@ def search_references(query: str = "", *, related_item: str = "", limit: int = 1
 
     for record in records:
         match_fields: list[str] = []
-        if related and related in _normalize_list(record.get("related_items")):
-            match_fields.append("related_items")
+        if related and related not in _normalize_list(record.get("related_items")):
+            continue
         if query:
             field_values = {
+                "reference_id": record.get("reference_id", ""),
+                "origin": json.dumps(record.get("origin", {}), ensure_ascii=False),
+                "message_text": record.get("message_text", ""),
+                "messages": json.dumps(record.get("messages", []), ensure_ascii=False),
+                "extracted_text": record.get("extracted_text", ""),
+                "url": record.get("url", ""),
+                "attachments": json.dumps(record.get("attachments", []), ensure_ascii=False),
                 "title": record.get("title", ""),
                 "kind": record.get("kind", ""),
                 "source": record.get("source", ""),
@@ -888,8 +940,10 @@ def search_references(query: str = "", *, related_item: str = "", limit: int = 1
             for field, value in field_values.items():
                 if query in str(value).lower():
                     match_fields.append(field)
-        if (query or related) and not match_fields:
+        if query and not match_fields:
             continue
+        if related:
+            match_fields.append("related_items")
         card_path = _reference_card_path(record["reference_id"])
         if not card_path.exists():
             warnings.append(f"索引记录缺少资料卡: {record['reference_id']}")
@@ -907,7 +961,9 @@ def search_references(query: str = "", *, related_item: str = "", limit: int = 1
                 "people": record.get("people", []),
                 "project": record.get("project", ""),
                 "related_items": record.get("related_items", []),
-                "note": record.get("note", ""),
+                "note": str(record.get("note", ""))[:320],
+                "origin": record.get("origin", {}),
+                "attachments": record.get("attachments", []),
                 "attachment": record.get("attachment", {}),
                 "match_fields": sorted(set(match_fields)) or ["all"],
             }
@@ -933,27 +989,41 @@ def _reference_read_range(read_chars: int, total_chars: int) -> dict[str, int | 
     return {"unit": "chars", "start": 0, "end": read_chars, "total": total_chars}
 
 
-def read_reference(reference_id: str, *, max_chars: int = REFERENCE_READ_LIMIT_CHARS) -> dict[str, Any]:
+def read_reference(reference_id: str, *, max_chars: int = REFERENCE_READ_LIMIT_CHARS, attachment_index: int = 1, offset: int = 0) -> dict[str, Any]:
     data = read_reference_card(reference_id)
     max_chars = max(1, min(int(max_chars or REFERENCE_READ_LIMIT_CHARS), 20000))
-    attachment = data.get("attachment") or {}
+    attachments = data.get("attachments") or ([data["attachment"]] if data.get("attachment") else [])
+    if offset < 0 or attachment_index < 1 or (attachments and attachment_index > len(attachments)):
+        raise GTDValidationError("附件序号或 offset 无效")
+    attachment = attachments[attachment_index - 1] if attachments else {}
     if not attachment:
         note = data.get("note", "")
+        total = len(note)
+        start = min(offset, total)
+        note = note[start:]
         read_chars = min(len(note), max_chars)
         return {
             "reference_id": data["reference_id"],
             "content": note[:max_chars],
             "source": "note",
             "truncated": len(note) > max_chars,
-            "range": _reference_read_range(read_chars, len(note)),
+            "range": {"unit": "chars", "start": start, "end": start + read_chars, "total": total},
             "read_chars": read_chars,
-            "total_chars": len(note),
+            "total_chars": total,
+            "next_offset": start + read_chars if len(note) > max_chars else None,
         }
     path = Path(attachment.get("path") or attachment.get("original_path") or "")
     if not path.exists() or not path.is_file():
         raise GTDValidationError(f"附件不存在或无法读取: {path}")
     try:
-        content = path.read_text(encoding="utf-8")
+        with path.open(encoding="utf-8") as stream:
+            remaining = offset
+            while remaining:
+                skipped = stream.read(min(remaining, 8192))
+                if not skipped:
+                    break
+                remaining -= len(skipped)
+            content = stream.read(max_chars + 1)
         encoding = "utf-8"
     except UnicodeDecodeError as exc:
         raise GTDValidationError("附件不是可直接读取的 UTF-8 文本文件") from exc
@@ -967,9 +1037,10 @@ def read_reference(reference_id: str, *, max_chars: int = REFERENCE_READ_LIMIT_C
         "mime": attachment.get("mime", ""),
         "encoding": encoding,
         "truncated": truncated,
-        "range": _reference_read_range(read_chars, len(content)),
+        "range": {"unit": "chars", "start": offset - remaining, "end": offset - remaining + read_chars, "total": None if truncated else offset - remaining + len(content)},
         "read_chars": read_chars,
-        "total_chars": len(content),
+        "total_chars": None if truncated else offset - remaining + len(content),
+        "next_offset": offset + read_chars if truncated else None,
     }
 
 
@@ -1019,7 +1090,7 @@ def process_inbox(
         archive_file = gtd_path("archive") / today_str()[:4] / f"{today_str()[5:7]}_quick.md"
         append_text(archive_file, f"- [x] {content} (quick, completed: {today_str()})\n")
     elif target == "next_actions":
-        number = get_next_number("N")
+        number = reserve_number("N")
         action_context = context or "@任意"
         metadata = [f"context: {action_context}"]
         if deadline:
@@ -1028,7 +1099,7 @@ def process_inbox(
         _append_target("next_actions.md", f"- [ ] {number}: {content} ({', '.join(metadata)})\n")
         result.update({"number": number, "context": action_context, "deadline": deadline})
     elif target == "waiting_for":
-        number = get_next_number("W")
+        number = reserve_number("W")
         metadata = [f"询问日期: {today_str()}"]
         if delegate:
             metadata.append(f"委派给: {delegate}")
@@ -1038,8 +1109,8 @@ def process_inbox(
         _append_target("waiting_for.md", f"- [ ] {number}: {content} ({', '.join(metadata)})\n")
         result.update({"number": number, "delegate": delegate, "estimated": estimated})
     elif target == "projects":
-        project_number = get_next_number("P")
-        action_number = get_next_number("N")
+        project_number = reserve_number("P")
+        action_number = reserve_number("N")
         name = project_name or content
         first = first_action or f"明确 {name} 的下一步"
         remove_inbox_item(item)
@@ -1071,7 +1142,7 @@ def parse_action_line(line: str) -> dict[str, Any] | None:
     if not status_match:
         return None
 
-    number_match = re.search(r"\b([NWP]\d{3}):", stripped)
+    number_match = re.search(r"\b([NWP]\d{3,}):", stripped)
     if not number_match:
         return None
 
@@ -1125,7 +1196,7 @@ def complete_number(number: str) -> dict[str, Any]:
     number = (number or "").strip().upper()
     if re.fullmatch(r"\d{1,3}", number):
         number = f"N{int(number):03d}"
-    if not re.fullmatch(r"[NWP]\d{3}", number):
+    if not re.fullmatch(r"[NWP]\d{3,}", number):
         raise GTDValidationError("number 必须是 N001、W001 或 P001 这样的编号")
 
     prefix = number[0]
@@ -1158,11 +1229,20 @@ def complete_task_line(number: str, filename: str) -> dict[str, Any]:
 
 
 def _project_blocks(content: str) -> list[tuple[int, int, str]]:
-    matches = list(re.finditer(r"^###\s+P\d{3}:.*$", content, flags=re.MULTILINE))
+    boundaries = []
+    offset = 0
+    in_fence = False
+    for line in content.splitlines(keepends=True):
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+        elif not in_fence and re.match(r"^#{1,3}\s", line):
+            boundaries.append((offset, bool(re.match(r"^###\s+P\d{3,}:", line))))
+        offset += len(line)
     blocks = []
-    for idx, match in enumerate(matches):
-        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(content)
-        blocks.append((match.start(), end, content[match.start() : end]))
+    for index, (start, is_project) in enumerate(boundaries):
+        if is_project:
+            end = boundaries[index + 1][0] if index + 1 < len(boundaries) else len(content)
+            blocks.append((start, end, content[start:end]))
     return blocks
 
 
@@ -1304,13 +1384,18 @@ def get_waiting_followups() -> list[str]:
 def daily_check() -> dict[str, Any]:
     today_tasks, tomorrow_tasks = get_urgent_actions()
     followups = get_waiting_followups()
+    overdue = collect_weekly_data()["overdue"]
     return {
         "date": today_str(),
+        "gtd_dir": str(get_gtd_dir()),
         "calendar": [{"item": item} for item in get_calendar_items()],
         "today_deadlines": [{"task": item} for item in today_tasks],
         "tomorrow_deadlines": [{"task": item} for item in tomorrow_tasks],
         "followups": [{"task": item} for item in followups],
-        "urgent_count": len(today_tasks) + len(tomorrow_tasks),
+        "overdue": [{"task": item} for item in overdue],
+        "inbox_count": len(read_inbox_items()),
+        "notices": due_notices(),
+        "urgent_count": len(today_tasks) + len(tomorrow_tasks) + len(overdue),
         "followup_count": len(followups),
     }
 
@@ -1329,7 +1414,7 @@ def get_archive_stats() -> int:
         return 0
     total = 0
     for path in archive_dir.rglob("*.md"):
-        total += count_tasks(read_text(path))[1]
+        total += count_tasks(re.sub(r"^(?:next_actions|waiting_for)\.md: ", "", read_text(path), flags=re.MULTILINE))[1]
     return total
 
 
@@ -1346,12 +1431,20 @@ def weekly_stats() -> dict[str, Any]:
         if added and datetime.strptime(added, "%Y-%m-%d").date() >= monday:
             new_items += 1
 
+    events_path = gtd_path("captures.jsonl")
+    if events_path.exists():
+        new_items = sum(monday.isoformat() <= json.loads(line)["date"] <= local_date().isoformat()
+                        for line in read_text(events_path).splitlines() if line.strip())
     pending_n, completed_n = count_tasks(next_content)
-    pending_w, _ = count_tasks(waiting_content)
+    active_completed_n = completed_n
+    completed_n += sum(bool(re.match(r"^- \[x\] N\d+:", line)) for line in normalized_archive().splitlines())
+    pending_w, completed_w = count_tasks(waiting_content)
     return {
         "new_items": new_items,
         "pending_actions": pending_n,
         "completed_actions": completed_n,
+        "active_completed_actions": active_completed_n,
+        "active_completed_waiting": completed_w,
         "waiting": pending_w,
         "projects": count_active_projects(projects_content),
     }
@@ -1365,7 +1458,7 @@ def collect_weekly_data() -> dict[str, Any]:
 
     completed_this_week = 0
     overdue: list[str] = []
-    for line in next_content.splitlines():
+    for line in (next_content + "\n" + waiting_content + "\n" + normalized_archive()).splitlines():
         completed = parse_date_field(line, "completed")
         if completed:
             completed_date = datetime.strptime(completed, "%Y-%m-%d").date()
@@ -1540,3 +1633,122 @@ def set_config(key: str, value: Any) -> dict[str, Any]:
     current[parts[-1]] = _coerce_config_value(value)
     path = save_config(config)
     return {"key": key, "value": current[parts[-1]], "config_file": str(path)}
+
+
+def capture_message(*, text: str = "", title: str = "", file_paths: list[str] | None = None,
+                    channel: str = "", chat_id: str = "", message_id: str = "",
+                    sender: str = "", sent_at: str = "", reference_id: str = "",
+                    extracted_text: str = "", tags: Any = None, notices: list[dict] | None = None) -> dict[str, Any]:
+    """Save one forwarded message group, or append an explicitly identified follow-up."""
+    paths = file_paths or []
+    if not isinstance(paths, list) or any(not isinstance(p, str) or not p for p in paths):
+        raise GTDValidationError("file_paths 必须是本地文件路径数组")
+    if not (text.strip() or paths or (reference_id and (notices or extracted_text or tags))):
+        raise GTDValidationError("消息至少需要原文或附件")
+    validated_notices = []
+    for notice in notices or []:
+        if not isinstance(notice, dict) or not notice.get("label") or not notice.get("date"):
+            raise GTDValidationError("通知日期需要 label 和 date")
+        validate_date(notice["date"])
+        kind = notice.get("kind", "deadline")
+        if kind not in {"deadline", "event"}:
+            raise GTDValidationError("通知 kind 必须是 deadline 或 event")
+        validated_notices.append({"label": notice["label"], "date": notice["date"], "kind": kind, "done": False})
+    ensure_gtd_dir()
+    origin = {"channel": channel, "chat_id": chat_id, "message_id": message_id,
+              "sender": sender, "sent_at": sent_at, "received_at": now_str()}
+    key = [channel, chat_id, message_id] if channel and chat_id and message_id else None
+    if key:
+        for card in reference_cards_dir().glob("R*.md"):
+            previous = read_reference_card(card.stem)
+            if key in previous.get("message_keys", []):
+                return {**previous, "duplicate": True}
+    if any(not Path(os.path.expanduser(p)).is_file() for p in paths):
+        raise GTDValidationError("存在尚未下载或已失效的附件；请下载全部附件后重试")
+    if reference_id:
+        data = read_reference_card(reference_id)
+    else:
+        data = add_reference(title=title or text[:60] or Path(paths[0]).name, note=text, tags=tags, source=channel)
+        data["origin"] = origin
+    existing = data.get("attachments") or ([data["attachment"]] if data.get("attachment") else [])
+    attachments = list(existing)
+    for path in paths:
+        attachment, _ = _build_attachment(data["reference_id"], path, managed="copy",
+                                           title=f"{len(attachments) + 1:03d}_{Path(path).stem}")
+        attachments.append(attachment)
+    data["attachments"] = attachments
+    data["attachment"] = attachments[0] if attachments else {}
+    data["kind"] = "file" if attachments else "memo"
+    previous_text = data.get("message_text", data.get("note", "") if reference_id else "")
+    data["message_text"] = "\n".join(filter(None, [previous_text, text]))
+    data["note"] = data["message_text"]
+    data["summary"] = data["note"][:160]
+    data["extracted_text"] = "\n".join(filter(None, [data.get("extracted_text", ""), extracted_text]))
+    data["notices"] = data.get("notices", []) + validated_notices
+    data["messages"] = data.get("messages", []) + [{"text": text, "origin": origin}]
+    data["message_keys"] = data.get("message_keys", []) + ([key] if key else [])
+    data["tags"] = list(dict.fromkeys(_normalize_list(data.get("tags")) + _normalize_list(tags)))
+    write_reference_card(data)
+    upsert_reference_index(data)
+    return {**data, "duplicate": False, "saved_attachment_count": len(attachments)}
+
+
+def reference_files(reference_id: str, attachment_index: int | None = None) -> dict[str, Any]:
+    data = read_reference_card(reference_id)
+    attachments = data.get("attachments") or ([data["attachment"]] if data.get("attachment") else [])
+    if attachment_index is not None:
+        if not 1 <= attachment_index <= len(attachments):
+            raise GTDValidationError("附件序号不存在")
+        attachments = [attachments[attachment_index - 1]]
+    files, missing = [], []
+    for item in attachments:
+        path = Path(item["path"])
+        if path.is_file():
+            files.append({"path": str(path.resolve()), "name": item.get("original_name", path.name),
+                          "mime": item.get("mime", ""), "media_tag": f"MEDIA:{path.resolve()}"})
+        else:
+            missing.append(str(path))
+    return {"reference_id": data["reference_id"], "text": data.get("message_text", data.get("note", "")),
+            "files": files, "missing": missing, "delivery_status": "prepared"}
+
+
+def due_notices() -> list[dict[str, Any]]:
+    tomorrow = (local_date() + timedelta(days=1)).isoformat()
+    result = []
+    for path in sorted(reference_cards_dir().glob("R*.md")):
+        data = read_reference_card(path.stem)
+        for index, notice in enumerate(data.get("notices", []), 1):
+            if not notice.get("done") and notice["date"] <= tomorrow:
+                result.append({**notice, "reference_id": path.stem, "notice_index": index,
+                               "title": data.get("title", ""), "overdue": notice["date"] < today_str()})
+    return result
+
+
+def update_notice(reference_id: str, notice_index: int, done: bool) -> dict[str, Any]:
+    data = read_reference_card(reference_id)
+    notices = data.get("notices", [])
+    if not 1 <= notice_index <= len(notices):
+        raise GTDValidationError("通知日期序号不存在")
+    notices[notice_index - 1]["done"] = done
+    write_reference_card(data)
+    upsert_reference_index(data)
+    return {"reference_id": reference_id, "notice": notices[notice_index - 1]}
+
+
+def _serialized(operation):
+    @wraps(operation)
+    def wrapped(*args, **kwargs):
+        with storage.transaction(get_gtd_dir()):
+            return operation(*args, **kwargs)
+    return wrapped
+
+
+# Nested calls share the outer journal; readers recover any interrupted transaction first.
+for _operation in (
+    "init_gtd", "capture", "read_inbox_items", "process_inbox", "get_next_number", "reserve_number",
+    "list_actions", "complete_number", "archive_completed", "daily_check", "create_weekly_review",
+    "weekly_stats", "get_archive_stats", "get_config", "set_config", "add_reference", "get_reference",
+    "search_references", "link_reference", "read_reference", "rebuild_reference_index", "capture_message",
+    "reference_files", "update_notice", "due_notices", "collect_weekly_data",
+):
+    globals()[_operation] = _serialized(globals()[_operation])

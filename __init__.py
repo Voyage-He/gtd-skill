@@ -12,17 +12,19 @@ SKILL_PATH = PLUGIN_DIR / "skills" / "gtd" / "SKILL.md"
 def _load_runtime():
     try:
         from .schemas import ALL_SCHEMAS
-        from .tools import HANDLERS
+        from .tools import HANDLERS, reminder_handler
     except ImportError:
         from schemas import ALL_SCHEMAS
-        from tools import HANDLERS
-    return ALL_SCHEMAS, HANDLERS
+        from tools import HANDLERS, reminder_handler
+    return ALL_SCHEMAS, HANDLERS, reminder_handler
 
 
 def register(ctx):
     """Register GTD tools and the GTD skill with Hermes."""
 
-    all_schemas, handlers = _load_runtime()
+    all_schemas, handlers, reminder_handler = _load_runtime()
+    handlers = dict(handlers)
+    handlers["gtd_reminder"] = reminder_handler(getattr(ctx, "dispatch_tool", None))
     missing = [schema["name"] for schema in all_schemas if schema["name"] not in handlers]
     if missing:
         raise RuntimeError(f"Missing GTD handler(s): {', '.join(missing)}")

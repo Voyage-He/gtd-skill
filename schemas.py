@@ -333,3 +333,47 @@ ALL_SCHEMAS = [
     REFERENCE_LINK,
     REFERENCE_READ,
 ]
+
+
+def _tool(name, description, properties, required=()):
+    return {"name": name, "description": description,
+            "parameters": {"type": "object", "properties": properties, "required": list(required)}}
+
+
+def _string(description):
+    return {"type": "string", "description": description}
+
+
+REFERENCE_READ["parameters"]["properties"].update({
+    "attachment_index": {"type": "integer", "minimum": 1, "description": "附件序号，从 1 开始"},
+    "offset": {"type": "integer", "minimum": 0, "description": "从第几个字符开始读，默认 0"},
+})
+ALL_SCHEMAS.extend([
+    _tool("gtd_message_capture", "保存转发消息原文和多个已下载附件的副本。可用 reference_id 补充同一条资料；仅已知的来源信息才填写。", {
+        "text": _string("消息原文，完整保留；纯附件可不填"),
+        "title": _string("简短标题，可省略"),
+        "file_paths": {"type": "array", "items": {"type": "string"}, "description": "全部附件已下载后的本地路径，自动复制托管"},
+        "channel": _string("接收渠道，例如 qqbot 或 weixin"),
+        "chat_id": _string("接收聊天 ID，仅使用渠道提供的值"),
+        "message_id": _string("渠道消息 ID，与 channel/chat_id 一起用于去重"),
+        "sender": _string("原发送人，仅在已知时填写"),
+        "sent_at": _string("原发送时间，仅在已知时填写"),
+        "reference_id": _string("明确补充到已有资料时填写；不要猜测合并"),
+        "extracted_text": _string("从图片或文件提取的检索文字，区别于原文；不可猜测"),
+        "tags": {"type": ["string", "array"], "items": {"type": "string"}},
+        "notices": {"type": "array", "description": "原文明示且无歧义的活动/截止日期；不确定时先保存原文再询问", "items": {
+            "type": "object", "properties": {"label": _string("事项"), "date": {"type": "string", "format": "date"},
+            "kind": {"type": "string", "enum": ["deadline", "event"]}}, "required": ["label", "date"]}},
+    }),
+    _tool("gtd_reference_files", "准备原文及原附件回传；不会读取附件正文。返回 MEDIA 标签供 Hermes 最终回复发送，prepared 不代表已送达。", {
+        "reference_id": _string("资料编号"), "attachment_index": {"type": "integer", "minimum": 1}}, ["reference_id"]),
+    _tool("gtd_reference_reindex", "从资料卡重建搜索索引；不会读取附件正文。手工编辑资料卡后使用，检查跳过记录。", {}),
+    _tool("gtd_notice_update", "将通知中的活动/截止事项标记完成或重新打开，控制每日提醒。", {
+        "reference_id": _string("资料编号"), "notice_index": {"type": "integer", "minimum": 1},
+        "done": {"type": "boolean"}}, ["reference_id", "notice_index", "done"]),
+    _tool("gtd_reminder", "通过 Hermes 调度器启用、查看、暂停或试运行每日提醒。不是仅保存配置；需 Gateway 在线。", {
+        "action": {"type": "string", "enum": ["enable", "status", "disable", "run"]},
+        "time": _string("每天 HH:MM，默认 09:00"),
+        "timezone": _string("IANA 时区，默认 Asia/Shanghai；必须与 Hermes 时区一致"),
+        "deliver": _string("默认 origin（启用时的聊天）；也可指定 platform:chat_id。修改时间时省略可保留原目标")}, ["action"]),
+])

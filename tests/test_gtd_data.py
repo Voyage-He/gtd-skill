@@ -366,7 +366,7 @@ class GTDDataReliabilityTests(unittest.TestCase):
         self.assertTrue(read["ok"])
         self.assertEqual(read["content"], "0123")
         self.assertTrue(read["truncated"])
-        self.assertEqual(read["range"], {"unit": "chars", "start": 0, "end": 4, "total": 10})
+        self.assertEqual(read["range"], {"unit": "chars", "start": 0, "end": 4, "total": None})
         self.assertEqual(read["read_chars"], 4)
         self.assertTrue(memo_read["ok"])
         self.assertEqual(memo_read["content"], "abc")

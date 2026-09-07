@@ -8,9 +8,11 @@ from typing import Any, Callable
 
 try:
     from . import gtd_core as core
+    from . import reminders
     from .schemas import ALL_SCHEMAS
 except ImportError:
     import gtd_core as core
+    import reminders
     from schemas import ALL_SCHEMAS
 
 
@@ -58,6 +60,26 @@ def _type_matches(value: Any, expected: str | list[str]) -> bool:
     return False
 
 
+def _validate_value(field: str, value: Any, prop: dict) -> None:
+    if prop.get("type") and not _type_matches(value, prop["type"]):
+        raise core.GTDValidationError(f"参数 {field} 类型不正确")
+    if "enum" in prop and value not in prop["enum"]:
+        raise core.GTDValidationError(f"参数 {field} 值不允许")
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if "minimum" in prop and value < prop["minimum"]:
+            raise core.GTDValidationError(f"参数 {field} 小于最小值")
+    if isinstance(value, list) and "items" in prop:
+        for index, item in enumerate(value):
+            _validate_value(f"{field}[{index}]", item, prop["items"])
+    if isinstance(value, dict):
+        for required in prop.get("required", []):
+            if not value.get(required):
+                raise core.GTDValidationError(f"缺少 {field}.{required}")
+        for key, item in value.items():
+            if key in prop.get("properties", {}):
+                _validate_value(f"{field}.{key}", item, prop["properties"][key])
+
+
 def _validate_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
     schema = _schema_map()[name]
     params = schema.get("parameters", {})
@@ -79,6 +101,7 @@ def _validate_args(name: str, args: dict[str, Any]) -> dict[str, Any]:
                 value = args[field]
             else:
                 raise core.GTDValidationError(f"参数 {field} 类型不正确")
+        _validate_value(field, value, prop)
         enum = prop.get("enum")
         if enum is not None and value not in enum:
             raise core.GTDValidationError(f"参数 {field} 必须是: {', '.join(enum)}")
@@ -244,7 +267,7 @@ def handle_stats(args: dict[str, Any] | None = None, **kwargs: Any) -> str:
         rate = (stats["completed_actions"] / total * 100) if total else 0.0
         return {
             "message": "GTD 统计报告",
-            "archive_total": archive_total + stats["completed_actions"],
+            "archive_total": archive_total + stats["active_completed_actions"] + stats["active_completed_waiting"],
             "new_items_this_week": stats["new_items"],
             "pending_actions": stats["pending_actions"],
             "waiting": stats["waiting"],
@@ -333,13 +356,48 @@ def handle_reference_link(args: dict[str, Any] | None = None, **kwargs: Any) -> 
 
 def handle_reference_read(args: dict[str, Any] | None = None, **kwargs: Any) -> str:
     def operation(data: dict[str, Any]) -> dict[str, Any]:
-        result = core.read_reference(data["reference_id"], max_chars=data.get("max_chars", core.REFERENCE_READ_LIMIT_CHARS))
+        result = core.read_reference(data["reference_id"], max_chars=data.get("max_chars", core.REFERENCE_READ_LIMIT_CHARS), attachment_index=data.get("attachment_index", 1), offset=data.get("offset", 0))
         return {"message": f"已读取参考资料: {result['reference_id']}", **result}
 
     return _run("gtd_reference_read", args, operation)
 
 
+def handle_message_capture(args: dict | None = None, **kwargs):
+    def operation(data):
+        result = core.capture_message(**data)
+        return {"message": "消息已保存" if not result.get("duplicate") else "该消息已保存，无需重复收集", **result}
+    return _run("gtd_message_capture", args, operation)
+
+
+def handle_reference_files(args: dict | None = None, **kwargs):
+    return _run("gtd_reference_files", args, lambda data: {
+        "message": "原件已准备，需由 Hermes 渠道发送；这不是送达确认", **core.reference_files(**data)})
+
+
+def handle_reference_reindex(args: dict | None = None, **kwargs):
+    return _run("gtd_reference_reindex", args, lambda data: {"message": "索引已重建，请检查 skipped", **core.rebuild_reference_index()})
+
+
+def handle_notice_update(args: dict | None = None, **kwargs):
+    return _run("gtd_notice_update", args, lambda data: {"message": "通知状态已更新", **core.update_notice(**data)})
+
+
+def handle_reminder(args: dict | None = None, **kwargs):
+    return _run("gtd_reminder", args, lambda data: reminders.manage(data, None))
+
+
+def reminder_handler(dispatch):
+    def handler(args: dict | None = None, **kwargs):
+        return _run("gtd_reminder", args, lambda data: reminders.manage(data, dispatch, **kwargs))
+    return handler
+
+
 HANDLERS = {
+    "gtd_message_capture": handle_message_capture,
+    "gtd_reference_files": handle_reference_files,
+    "gtd_reference_reindex": handle_reference_reindex,
+    "gtd_notice_update": handle_notice_update,
+    "gtd_reminder": handle_reminder,
     "gtd_init": handle_init,
     "gtd_capture": handle_capture,
     "gtd_inbox": handle_inbox,

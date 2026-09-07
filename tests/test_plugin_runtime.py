@@ -70,6 +70,8 @@ class PluginRuntimeTests(unittest.TestCase):
                 "gtd_reference_get",
                 "gtd_reference_link",
                 "gtd_reference_read",
+                "gtd_reference_files",
+                "gtd_reference_reindex",
             ],
         )
         for name in reference_names:
