@@ -8,11 +8,12 @@ from typing import Any, Callable
 
 try:
     from . import gtd_core as core
-    from . import reminders
+    from . import reminders, materials
     from .schemas import ALL_SCHEMAS
 except ImportError:
     import gtd_core as core
     import reminders
+    import materials
     from schemas import ALL_SCHEMAS
 
 
@@ -392,7 +393,36 @@ def reminder_handler(dispatch):
     return handler
 
 
+def handle_materials_context(args: dict | None = None, **kwargs):
+    return _run("gtd_materials_context", args, lambda data: {
+        "message": "已读取材料上下文；候选不代表自动归组", **materials.context(**data)})
+
+
+def handle_materials_analyze(args: dict | None = None, **kwargs):
+    return _run("gtd_materials_analyze", args, lambda data: {
+        "message": "已保存附件分析结果", **materials.analyze_attachment(**data)})
+
+
+def handle_materials_organize(args: dict | None = None, **kwargs):
+    return _run("gtd_materials_organize", args, lambda data: {
+        "message": "已整理材料，请区分保存状态和分析覆盖范围", **materials.organize(**data)})
+
+
+def handle_relations(args: dict | None = None, **kwargs):
+    return _run("gtd_relations", args, lambda data: {
+        "message": "关联已处理；任务与资料各自独立", **core.relations(**data)})
+
+
+def handle_memory(args: dict | None = None, **kwargs):
+    return _run("gtd_memory", args, lambda data: {"message": "记忆操作完成", **core.memory(**data)})
+
+
 HANDLERS = {
+    "gtd_memory": handle_memory,
+    "gtd_relations": handle_relations,
+    "gtd_materials_context": handle_materials_context,
+    "gtd_materials_analyze": handle_materials_analyze,
+    "gtd_materials_organize": handle_materials_organize,
     "gtd_message_capture": handle_message_capture,
     "gtd_reference_files": handle_reference_files,
     "gtd_reference_reindex": handle_reference_reindex,

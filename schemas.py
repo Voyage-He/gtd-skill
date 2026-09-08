@@ -377,3 +377,53 @@ ALL_SCHEMAS.extend([
         "timezone": _string("IANA 时区，默认 Asia/Shanghai；必须与 Hermes 时区一致"),
         "deliver": _string("默认 origin（启用时的聊天）；也可指定 platform:chat_id。修改时间时省略可保留原目标")}, ["action"]),
 ])
+
+_EVIDENCE = {"type": "array", "items": {"type": "object", "properties": {
+    "source": _string("上下文中的来源，例如 message:1 或 attachment:2"),
+    "quote": _string("来源中实际存在的原文片段；不是推测")}, "required": ["source", "quote"]}}
+_ACTION = {"type": "object", "properties": {
+    "key": _string("组内稳定英文标识，例如 register；后续补充资料时复用同一行动的 key"),
+    "content": _string("用户需要做的具体下一步；不要把教程步骤全当待办"),
+    "deadline": {"type": "string", "format": "date", "description": "无歧义的截止日期，可省略"},
+    "evidence": _EVIDENCE}, "required": ["key", "content", "evidence"]}
+ALL_SCHEMAS.extend([
+    _tool("gtd_materials_context", "获取同聊天的近期材料候选供语义归组，或读取一组材料的原文、附件分析、已有行动与版本号。不会读取附件文件。", {
+        "reference_id": _string("已知资料组编号，读取该组"),
+        "channel": _string("寻找候选时必须提供接收渠道"),
+        "chat_id": _string("寻找候选时必须提供聊天 ID；不能跨聊天猜测归组")}),
+    _tool("gtd_materials_analyze", "记录 Hermes 实际解析得到的单个附件正文、摘要、关键词和覆盖范围，供乱码文件名的内容召回；工具本身不执行 OCR 或转写。", {
+        "reference_id": _string("资料组编号"),
+        "attachment_index": {"type": "integer", "minimum": 1},
+        "expected_revision": {"type": "integer", "minimum": 0, "description": "最新上下文版本；每次保存分析后递增"},
+        "status": {"type": "string", "enum": ["complete", "partial", "failed"]},
+        "method": _string("实际解析方法，例如文本读取、OCR、语音转写、视频画面分析"),
+        "text": _string("提取文字或转写内容，保留依据"),
+        "summary": _string("这个附件讲什么，有什么用途"),
+        "keywords": {"type": "array", "items": {"type": "string"}},
+        "locator": _string("解析覆盖页码、视频时段等；partial 时必填"),
+        "error": _string("失败原因，failed 时必填")},
+        ["reference_id", "attachment_index", "expected_revision", "status", "method"]),
+    _tool("gtd_materials_organize", "根据 Hermes 对整组材料的理解，保存主题摘要、检索词，并原子创建有原文依据的行动/项目及双向关联。参考资料始终保留。含糊需求使用 needs_clarification。", {
+        "reference_id": _string("资料组编号"),
+        "expected_revision": {"type": "integer", "minimum": 0},
+        "title": _string("整件事的简短标题"), "summary": _string("综合各份材料形成的摘要，明确未知内容"),
+        "classification": {"type": "string", "enum": ["reference", "actions", "project", "needs_clarification"]},
+        "actions": {"type": "array", "items": _ACTION},
+        "keywords": {"type": "array", "items": {"type": "string"}},
+        "questions": {"type": "array", "items": {"type": "string"}, "description": "仅列真正影响判断的歧义问题"}},
+        ["reference_id", "expected_revision", "title", "summary", "classification"]),
+])
+
+ALL_SCHEMAS.append(_tool("gtd_relations", "从任务或资料任一端查询、建立或解除多对多关联。双方是独立对象；解除关联不删除任务、资料、附件或历史来源依据。", {
+    "item_id": _string("任务/项目编号 N001、W001、P001 或资料编号 R20260909-001"),
+    "action": {"type": "string", "enum": ["get", "link", "unlink"], "description": "默认 get"},
+    "other_id": _string("link/unlink 时填写另一端编号；一端是资料，另一端是任务或项目")}, ["item_id"]))
+
+ALL_SCHEMAS.append(_tool("gtd_memory", "保存和召回用户提供的小事实、价格、数量、位置和习惯，独立于待办。保留一般/大约等限定语，不推断为实时事实。修改、删除、恢复需先 get 最新 revision；历史保留。", {
+    "action": {"type": "string", "enum": ["search", "get", "add", "update", "delete", "restore"]},
+    "query": _string("搜索词；空字符串列出所有未删除记忆；使用核心词例如奶茶、办公室"),
+    "memory_id": _string("get/update/delete/restore 的记忆编号，如 M0001"),
+    "content": _string("add/update 的完整事实，保留用户给出的单位、范围和限定词"),
+    "tags": {"type": "array", "items": {"type": "string"}},
+    "source": _string("用户给出的来源或上下文，不要猜测"),
+    "expected_revision": {"type": "integer", "minimum": 1, "description": "update/delete/restore 必填，使用 get 返回的 revision"}}, ["action"]))

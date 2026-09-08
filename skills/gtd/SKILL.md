@@ -1,6 +1,6 @@
 ---
 name: gtd
-description: Use the Hermes GTD tools to capture, organize, review, and complete work in a Markdown GTD system.
+description: Collect and understand mixed messages, documents, screenshots and videos as one matter; derive evidence-linked GTD actions and searchable reference material, and manage daily reminders.
 ---
 
 # GTD Workflow For Hermes Agent
@@ -26,7 +26,7 @@ Use the registered `gtd_*` tools first for all GTD operations. Do not ask the us
 - Search reference material: call `gtd_reference_search`.
 - View a reference card: call `gtd_reference_get`.
 - Link a reference to a GTD item: call `gtd_reference_link`.
-- Read reference content: call `gtd_reference_read` only when the user explicitly asks to open, read, preview, summarize, or extract content.
+- Read reference content: call `gtd_reference_read` when the user requests content reading or mixed-material organization; ordinary searches remain metadata-first.
 
 ## Natural Language Examples
 
@@ -44,13 +44,13 @@ Use the registered `gtd_*` tools first for all GTD operations. Do not ask the us
 
 ## Reference Material
 
-Use Reference Registry for work facts, project context, group-chat notes, links, and file attachments that may need later recall. Prefer `gtd_reference_add` when the user says "记一条资料", "登记这个文件", "这个以后要用", or records a project-specific memo.
+For batches about one matter, follow **A Whole Matter Sent as Mixed Materials** below. Use Reference Registry for work facts, project context, group-chat notes, links, and file attachments that may need later recall. Prefer `gtd_reference_add` when the user says "记一条资料", "登记这个文件", "这个以后要用", or records a project-specific memo.
 
 Reference tools are metadata-first:
 
 - `gtd_reference_search`, `gtd_reference_get`, and `gtd_reference_link` must not be treated as permission to read attachment contents.
 - When search returns a file attachment, show the reference ID, title, source, date, filename/path, tags, and match fields.
-- Call `gtd_reference_read` only after the user explicitly asks to read, open, preview, summarize, compare, or extract content from a reference.
+- Call `gtd_reference_read` for requested reading, summarization, comparison, extraction, or whole-matter organization. A search alone does not request content analysis.
 
 For file attachments:
 
@@ -167,3 +167,105 @@ without a delivery result. Daily output includes overdue/today/tomorrow tasks,
 waiting follow-ups, notice dates with reference IDs, and inbox count. It sends
 a short daily message even on empty days. The user can reply using the included
 IDs to complete an item or retrieve its source material.
+
+## A Whole Matter Sent as Mixed Materials
+
+When the user sends a notice, tutorial document, teaching video, screenshots,
+and other material about one matter, take responsibility for organizing the
+matter. The user should not need to pre-classify, rename, or enter metadata.
+This workflow authorizes relevant content analysis for organization, including
+calling the text reader or available Hermes document/vision/transcription tools;
+the metadata-only rule still applies to ordinary searches with no analysis request.
+
+1. **Save and group.** Use `gtd_materials_context(channel=..., chat_id=...)` for
+   recent candidates when channel identity is available. Compare subject,
+   participants, dates, and the conversational context. Append with
+   `gtd_message_capture(reference_id=...)` only when materials clearly belong
+   together. Mere proximity in time is insufficient; unrelated matters stay
+   separate. If context is missing or conflicting, preserve separately and ask
+   one short question. Never attach to another chat's candidate by guesswork.
+   During a burst, acknowledge receipt briefly; “发完了/整理一下” is an explicit
+   signal to consolidate. If the user presents a complete batch for processing,
+   organize it in that turn. There is no background silence timer: do not promise
+   later processing unless an actual job has been scheduled.
+
+2. **Read and track coverage.** Get the group's `gtd_materials_context`. The
+   original sources are named `message:1`, `attachment:2`, etc. Read meaningful
+   content from each unprocessed attachment using available Hermes tools. For
+   text use `gtd_reference_read` and follow `next_offset` as necessary. For PDF,
+   office documents and screenshots use available document/vision tools. For
+   videos use transcription plus relevant visual content when the tutorial
+   relies on demonstrations. A transcript alone is partial coverage of a visual
+   tutorial; record the limitation. Do not invent tool availability or pretend
+   to have watched a video based on its filename.
+
+3. **Store what was understood.** Call `gtd_materials_analyze` per attachment
+   with actual extracted text, a useful summary, and retrieval keywords. Record
+   method and page/time coverage. Use `partial` for an excerpt, sampled frames,
+   or incomplete extraction, and `failed` with the reason when unsupported.
+   `complete` means the relevant entire attachment was processed, not just that
+   the tool returned successfully. Each save returns a new revision; use it for
+   the next call. Raw attachments stay unchanged and retrievable. Failed parsing
+   must not prevent saving the original or analyzing the remaining materials.
+
+4. **Understand the matter.** Distinguish explicit obligations addressed to the
+   user from background instructions. “请在周五前报名” can justify an action;
+   “第一步打开软件” in a reference tutorial does not itself mean the user intends
+   to execute it. Consider whether the notice applies to the user. Infer a
+   project only when a user-relevant outcome actually needs several steps.
+   Preserve useful teaching/reference material alongside any resulting actions.
+   If user intent, original dates, or applicability are unclear, save a summary
+   and the critical question instead of creating speculative obligations.
+
+5. **Organize with evidence.** Call `gtd_materials_organize` with the latest
+   revision, a matter-level title/summary/keywords, and `classification`:
+   `reference`, `actions`, `project`, or `needs_clarification`. Each action needs
+   a stable key such as `register` and an exact quote from one or more stored
+   source IDs. Include supporting date text when setting a deadline. Never use
+   a generated summary as if it were an original quotation. In later passes
+   reuse existing action keys; do not create the same action under another key.
+   The tool creates GTD items and links them to the reference in one transaction.
+   It does not erase prior tasks when classification changes.
+
+6. **Reply briefly.** State what matter was saved, the concrete actions and due
+   dates, and any unprocessed/partial attachments or question. For example:
+   “已整理为培训报名资料，保存 4 个附件；新增周五前报名的待办 N012。
+   视频已保存，当前无法转写，内容尚未分析。” Do not say all material has been
+   understood just because `materials_state` is `organized`; inspect `coverage`.
+
+When search returns `matched_attachment_indices`, use those one-based indices
+to select the relevant original with `gtd_reference_files`. Listed actions also
+return `reference_id` so follow-up questions can retrieve their source bundle.
+
+Later recall should use the matter title, document summaries, extracted text,
+people, purpose and keywords rather than original filenames. Search metadata
+first; then return selected originals when requested. Retrieval keywords should
+include natural expressions the user might remember, without fabricating facts.
+
+## Independent tasks and references
+
+Tasks/projects and references are peer entities with independent lifecycles.
+Neither owns the other. A reference may have zero or many tasks; a task may have
+zero or many references. Do not force reference-only material into a task.
+Use `gtd_relations(item_id=..., action="get")` from either endpoint to query links,
+and `action="link"` / `"unlink"` with `other_id` to change them. Unlinking does not
+complete or delete either entity or its attachments. Completing/archiving a task
+does not complete, archive or delete its references. `related_references` on
+`gtd_list_actions` is the live many-to-many relation; singular `reference_id`,
+`material_actions` and evidence are provenance/history, not parent-child ownership.
+Do not restore explicitly removed links merely because materials are reorganized.
+
+## Small factual memories
+
+Use `gtd_memory` for small user-provided facts (prices, quantities, locations,
+preferences, routines), e.g. “楼下的奶茶价格一般是10元” or “办公室一般放着10本书”.
+These are independent memories, not tasks: do not add deadlines, completion state,
+or a required task/reference association. Preserve scope, units and qualifiers
+such as 一般/大约; recording time is not evidence of current real-world validity.
+Before adding, search using key terms for an existing memory. If the user explicitly
+corrects the same fact, get the existing record and update using its latest revision.
+If scope is ambiguous or conflicting, ask rather than silently overwrite or merge.
+When recalling, search, answer from saved content, and mention age/context when useful;
+never fabricate a match. `search` is keyword search, not a semantic model. Broaden or
+change keywords when needed. User-requested deletion uses `delete`; history stays
+available through `get` and a deleted record can be `restore`d with its latest revision.

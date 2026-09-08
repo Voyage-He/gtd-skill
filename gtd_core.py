@@ -534,7 +534,10 @@ def next_reference_id() -> str:
     ensure_gtd_dir()
     prefix = f"R{local_date().strftime('%Y%m%d')}"
     existing: list[int] = []
-    for path in reference_cards_dir().glob(f"{prefix}-*.md"):
+    # Browser deletions retain cards here; never recycle their identifiers.
+    paths = list(reference_cards_dir().glob(f"{prefix}-*.md"))
+    paths.extend((gtd_path("web-trash") / "reference-cards").glob(f"{prefix}-*.md"))
+    for path in paths:
         match = re.fullmatch(rf"{re.escape(prefix)}-(\d{{3,}})\.md", path.name)
         if match:
             existing.append(int(match.group(1)))
@@ -625,6 +628,9 @@ def _reference_index_record(data: dict[str, Any]) -> dict[str, Any]:
         "messages": data.get("messages", []),
         "extracted_text": data.get("extracted_text", ""),
         "url": data.get("url", ""),
+        "attachment_analysis": {index: item for index, item in data.get("attachment_analysis", {}).items()
+                                if item.get("status") != "failed"},
+        "materials_state": data.get("materials_state", "saved"),
         "search_text": " ".join(str(part).lower() for part in searchable if part),
     }
 
@@ -915,6 +921,8 @@ def search_references(query: str = "", *, related_item: str = "", limit: int = 1
             continue
         if query:
             field_values = {
+                "summary": record.get("summary", ""),
+                "analysis_text": json.dumps(record.get("attachment_analysis", {}), ensure_ascii=False),
                 "reference_id": record.get("reference_id", ""),
                 "origin": json.dumps(record.get("origin", {}), ensure_ascii=False),
                 "message_text": record.get("message_text", ""),
@@ -961,6 +969,13 @@ def search_references(query: str = "", *, related_item: str = "", limit: int = 1
                 "people": record.get("people", []),
                 "project": record.get("project", ""),
                 "related_items": record.get("related_items", []),
+                "summary": str(record.get("summary", ""))[:320],
+                "materials_state": record.get("materials_state", "saved"),
+                "matched_attachment_indices": [
+                    int(index) for index, analysis in record.get("attachment_analysis", {}).items()
+                    if query and any(query in str(analysis.get(field, "")).lower()
+                                     for field in ("text", "summary", "keywords"))
+                ],
                 "note": str(record.get("note", ""))[:320],
                 "origin": record.get("origin", {}),
                 "attachments": record.get("attachments", []),
@@ -983,6 +998,51 @@ def link_reference(reference_id: str, related_item: str) -> dict[str, Any]:
     card_path = write_reference_card(data)
     upsert_reference_index(data)
     return {"reference_id": data["reference_id"], "related_items": related, "card_path": str(card_path)}
+
+
+def relation_edges() -> list[dict[str, str]]:
+    """Undirected many-to-many links, stored once in cards for legacy compatibility.
+
+    Source/evidence fields describe history, not ownership or live links.
+    """
+    edges = []
+    for path in sorted(reference_cards_dir().glob("R*.md")):
+        card = read_reference_card(path.stem)
+        for item in dict.fromkeys(_normalize_list(card.get("related_items"))):
+            edges.append({"reference_id": path.stem, "item_id": item})
+    return edges
+
+
+def relations(item_id: str, action: str = "get", other_id: str = "") -> dict[str, Any]:
+    """Query or change a relationship from either endpoint, without owning it."""
+    def normalize(value):
+        return _normalize_reference_id(value) if value.strip().upper().startswith("R") else _validate_related_item(value)
+    item_id = normalize(item_id)
+    if action not in {"get", "link", "unlink"}:
+        raise GTDValidationError("action 必须是 get、link 或 unlink")
+    if action != "get":
+        other_id = normalize(other_id)
+        is_reference = bool(REFERENCE_ID_RE.fullmatch(item_id))
+        if is_reference == bool(REFERENCE_ID_RE.fullmatch(other_id)):
+            raise GTDValidationError("关联需要一个资料编号和一个任务/项目编号")
+        reference_id, number = (item_id, other_id) if is_reference else (other_id, item_id)
+        card = read_reference_card(reference_id)
+        if action == "link":
+            # A task may be archived; relationships do not change its lifecycle.
+            if number.startswith("inbox:"):
+                exists = any(clean_content(i) == number[6:] for i in read_inbox_items())
+            else:
+                content = read_text(gtd_path(PREFIX_FILES[number[0]])) + "\n" + archive_content()
+                exists = bool(re.search(r"(?m)^(?:###\s+|\s*- \[[ x]\]\s*)" + re.escape(number) + r":", content))
+            if not exists:
+                raise GTDValidationError("关联对象不存在，请先创建任务或项目")
+            link_reference(reference_id, number)
+        else:
+            card["related_items"] = [n for n in _normalize_list(card.get("related_items")) if n != number]
+            write_reference_card(card)
+            upsert_reference_index(card)
+    edges = [edge for edge in relation_edges() if item_id in edge.values()]
+    return {"item_id": item_id, "relations": edges}
 
 
 def _reference_read_range(read_chars: int, total_chars: int) -> dict[str, int | str]:
@@ -1162,6 +1222,7 @@ def parse_action_line(line: str) -> dict[str, Any] | None:
         "number": number,
         "content": rest.strip(),
         "context": metadata.get("context", ""),
+        "reference_id": metadata.get("reference", ""),
         "deadline": metadata.get("deadline", ""),
         "completed": metadata.get("completed", ""),
     }
@@ -1185,6 +1246,10 @@ def list_actions(context: str = "", show_all: bool = False) -> list[dict[str, An
         if context and context.lower() not in action["context"].lower():
             continue
         actions.append(action)
+
+    links = relation_edges()
+    for action in actions:
+        action["related_references"] = [e["reference_id"] for e in links if e["item_id"] == action["number"]]
 
     def sort_key(action: dict[str, Any]) -> tuple[int, str]:
         return (0, action["deadline"]) if action["deadline"] else (1, action["number"])
@@ -1688,6 +1753,9 @@ def capture_message(*, text: str = "", title: str = "", file_paths: list[str] | 
     data["messages"] = data.get("messages", []) + [{"text": text, "origin": origin}]
     data["message_keys"] = data.get("message_keys", []) + ([key] if key else [])
     data["tags"] = list(dict.fromkeys(_normalize_list(data.get("tags")) + _normalize_list(tags)))
+    data["materials_revision"] = data.get("materials_revision", 0) + 1
+    data["materials_state"] = "collecting"
+    data["materials_updated_at"] = now_str()
     write_reference_card(data)
     upsert_reference_index(data)
     return {**data, "duplicate": False, "saved_attachment_count": len(attachments)}
@@ -1735,6 +1803,54 @@ def update_notice(reference_id: str, notice_index: int, done: bool) -> dict[str,
     return {"reference_id": reference_id, "notice": notices[notice_index - 1]}
 
 
+def memory(action: str = "search", *, query: str = "", memory_id: str = "",
+           content: str = "", tags: Any = None, source: str | None = None,
+           expected_revision: int | None = None) -> dict[str, Any]:
+    """Small user-reported facts, independent of tasks and reference documents."""
+    if action not in {"search", "get", "add", "update", "delete", "restore"}:
+        raise GTDValidationError("未知记忆操作")
+    path = gtd_path("memories.json")
+    state = json.loads(read_text(path)) if path.exists() else {"next_id": 1, "items": []}
+    items = state["items"]
+    if action == "search":
+        words = query.casefold().split()
+        found = [i for i in items if not i.get("deleted") and all(
+            word in (i["content"] + " " + " ".join(i["tags"]) + " " + i.get("source", "")).casefold()
+            for word in words)]
+        return {"memories": [{k: v for k, v in i.items() if k != "history"} for i in found], "count": len(found)}
+    if action in {"add", "update"} and (not isinstance(content, str) or not content.strip()):
+        raise GTDValidationError("记忆内容不能为空")
+    if action == "add":
+        item = {"memory_id": f"M{state['next_id']:04d}", "content": content.strip(),
+                "tags": _normalize_list(tags), "source": source or "", "created_at": now_str(),
+                "updated_at": now_str(), "revision": 1, "deleted": False, "history": []}
+        state["next_id"] += 1
+        items.append(item)
+    else:
+        item = next((i for i in items if i["memory_id"] == memory_id.upper()), None)
+        if item is None:
+            raise GTDValidationError("未找到记忆编号")
+        if action == "get":
+            return {"memory": deepcopy(item)}
+        if expected_revision != item["revision"]:
+            raise GTDValidationError("记忆已变化，请重新读取最新版本后修改")
+        if item.get("deleted") and action != "restore":
+            raise GTDValidationError("记忆已删除，请先恢复")
+        item["history"].append({k: v for k, v in item.items() if k != "history"})
+        if action == "update":
+            item["content"] = content.strip()
+            if tags is not None:
+                item["tags"] = _normalize_list(tags)
+            if source is not None:
+                item["source"] = source
+        else:
+            item["deleted"] = action == "delete"
+        item["updated_at"] = now_str()
+        item["revision"] += 1
+    write_text(path, json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+    return {"memory": deepcopy(item)}
+
+
 def _serialized(operation):
     @wraps(operation)
     def wrapped(*args, **kwargs):
@@ -1749,6 +1865,6 @@ for _operation in (
     "list_actions", "complete_number", "archive_completed", "daily_check", "create_weekly_review",
     "weekly_stats", "get_archive_stats", "get_config", "set_config", "add_reference", "get_reference",
     "search_references", "link_reference", "read_reference", "rebuild_reference_index", "capture_message",
-    "reference_files", "update_notice", "due_notices", "collect_weekly_data",
+    "reference_files", "update_notice", "due_notices", "collect_weekly_data", "relations", "relation_edges", "memory",
 ):
     globals()[_operation] = _serialized(globals()[_operation])
