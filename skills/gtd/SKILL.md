@@ -1,11 +1,56 @@
 ---
 name: gtd
-description: Collect and understand mixed messages, documents, screenshots and videos as one matter; derive evidence-linked GTD actions and searchable reference material, and manage daily reminders.
+description: Collect and understand mixed messages, documents, screenshots and videos as one matter; derive evidence-linked GTD actions and searchable reference material, manage daily reminders, and manually start or stop the GTD web service.
 ---
 
 # GTD Workflow For Hermes Agent
 
 Use the registered `gtd_*` tools first for all GTD operations. Do not ask the user to run local scripts or shell commands for normal GTD work. Parse each tool response as JSON, check `ok`, and summarize the result in natural language. Show raw JSON only when the user asks for it.
+
+## Start and Stop the Web Service
+
+For “打开 GTD 服务”, “启动网页服务”, “关闭 GTD 服务”, or “停止网页服务”,
+use the available terminal/process tool. The `gtd_*` tools do not start or stop
+the web server. This workflow manages the server process only and needs no browser.
+For “怎么手动启动”, explain the command without launching it.
+Keep this an on-demand process; do not install login items, launchd/systemd jobs,
+or other automatic startup mechanisms as part of this workflow.
+
+1. Locate `web_server.py` in the plugin root (two levels above this skill's
+   `SKILL.md`). For a user installation this is normally
+   `~/.hermes/plugins/gtd/web_server.py`; a project installation uses
+   `.hermes/plugins/gtd/web_server.py`. Use the actual installed path or the
+   current source checkout, and check that the server and `web/` assets exist.
+   If missing, report the incomplete installation instead of inventing a path.
+2. Use the same `GTD_DIR` as the running Hermes plugin. Prefer its known runtime
+   setting or a directory reported by a GTD tool; the terminal environment may
+   differ. With no override, the default is `~/gtd`. Resolve conflicting directory
+   information before launching, because startup initializes missing data files.
+3. Check whether the requested port (default 8765) already serves this GTD
+   workspace. Reuse an existing instance only when its identity and data directory
+   are established from the process/session or configuration. A successful HTTP
+   response alone does not establish either. If another service occupies the port,
+   leave it running and use a free port such as 8766, reporting the change.
+4. Start Python 3 in a terminal session that supports a long-running process.
+   These are examples; substitute verified paths and quote paths containing spaces:
+
+   ```bash
+   python3 ~/.hermes/plugins/gtd/web_server.py
+   GTD_DIR="/actual/gtd-directory" python3 "/actual/plugin-directory/web_server.py" --port 8766
+   ```
+
+   Retain the process/session handle to inspect output and stop it later. If the
+   available tool cannot keep a process alive after the call, give the concrete
+   command for a user terminal and explain that it must stay open.
+5. Inspect startup output and use a command-line HTTP request to `/` with a short
+   timeout to verify the service responds. No browser is required. Report startup
+   errors if it exits; on success return the listening address/port and data
+   directory. The server binds only to `127.0.0.1`; this is a server-local address,
+   not a remotely accessible link. Keep the existing binding and networking setup.
+6. To stop, send Ctrl+C to the recorded terminal session, or terminate only a
+   positively identified GTD web process, then verify it exited. If already stopped,
+   report that state. Manual startup provides no automatic restart after
+   process exit or reboot; do not promise background persistence.
 
 ## Tool Mapping
 
