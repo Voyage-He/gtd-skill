@@ -5,8 +5,11 @@ import re
 import uuid
 from pathlib import Path
 
-import gtd_core as core
-import storage
+try:
+    from . import gtd_core as core, storage
+except ImportError:
+    import gtd_core as core
+    import storage
 
 FILES = {"inbox": "inbox.md", "next_actions": "next_actions.md",
          "waiting_for": "waiting_for.md", "projects": "projects.md",

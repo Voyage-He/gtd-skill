@@ -300,7 +300,7 @@ REFERENCE_LINK = {
 # ── gtd_reference_read ────────────────────────────────
 REFERENCE_READ = {
     "name": "gtd_reference_read",
-    "description": "显式读取 GTD reference 的备注或文本附件内容，并返回读取范围和截断信息。只有用户明确要求读取、总结、预览或抽取内容时才使用。",
+    "description": "读取 GTD reference 的备注或文本附件内容，并返回读取范围和截断信息。用于用户要求的阅读或统一 GTD 响应中必要的相关内容理解；普通搜索仍优先元数据。",
     "parameters": {
         "type": "object",
         "properties": {
@@ -371,7 +371,7 @@ ALL_SCHEMAS.extend([
     _tool("gtd_notice_update", "将通知中的活动/截止事项标记完成或重新打开，控制每日提醒。", {
         "reference_id": _string("资料编号"), "notice_index": {"type": "integer", "minimum": 1},
         "done": {"type": "boolean"}}, ["reference_id", "notice_index", "done"]),
-    _tool("gtd_reminder", "通过 Hermes 调度器启用、查看、暂停或试运行每日提醒。不是仅保存配置；需 Gateway 在线。", {
+    _tool("gtd_reminder", "兼容入口：通过 Hermes 调度器启用、查看、暂停或试运行每日 GTD 响应，执行统一审视流程。通用管理使用 gtd_manage。需 Gateway 在线。", {
         "action": {"type": "string", "enum": ["enable", "status", "disable", "run"]},
         "time": _string("每天 HH:MM，默认 09:00"),
         "timezone": _string("IANA 时区，默认 Asia/Shanghai；必须与 Hermes 时区一致"),
@@ -427,3 +427,33 @@ ALL_SCHEMAS.append(_tool("gtd_memory", "保存和召回用户提供的小事实�
     "tags": {"type": "array", "items": {"type": "string"}},
     "source": _string("用户给出的来源或上下文，不要猜测"),
     "expected_revision": {"type": "integer", "minimum": 1, "description": "update/delete/restore 必填，使用 get 返回的 revision"}}, ["action"]))
+
+ALL_SCHEMAS.append(_tool("gtd_manage", "统一 GTD 响应入口。review 同时召回相关内容和当前目录的真实定时任务；get 读取详情；对内容或定时任务增删改查。每次对话或定时触发都先审视、执行、复核，再统一反馈。", {
+    "action": {"type": "string", "enum": ["review", "get", "create", "update", "delete", "complete", "pause", "resume", "run"]},
+    "target": {"type": "string", "enum": ["content", "schedule"], "description": "默认 content；review 总是包含内容与调度"},
+    "id": _string("get/修改时使用 review 返回的真实内容或定时任务 ID，不猜测"),
+    "revision": _string("修改已有内容或定时任务前，get 返回的最新 revision"),
+    "query": _string("review 的相关关键词，多个词用空格分隔；空且无 ids 时返回概览"),
+    "ids": {"type": "array", "items": {"type": "string"}, "description": "review 的内容或定时任务 ID，沿关联扩展召回"},
+    "offset": {"type": "integer", "minimum": 0},
+    "limit": {"type": "integer", "minimum": 1, "description": "内容概览分页，默认 50，最多 200"},
+    "previous_revision": _string("与上次相同召回条件的 review 版本比较；不能仅凭 changed=false 忽略失败或问题"),
+    "expected_directory": _string("定时触发时传入 GTD_CONTEXT.gtd_dir；在召回前校验，目录不一致则停止"),
+    "data": {"type": "object", "properties": {
+        "category": {"type": "string", "enum": ["inbox", "next_actions", "waiting_for", "projects", "someday_maybe", "materials", "memories"]},
+        "content": _string("创建任务或新增/更新记忆的内容"),
+        "raw": _string("更新任务/项目的完整 Markdown，保留编号及未改动的字段"),
+        "title": _string("资料标题"), "note": _string("资料备注"), "url": _string("创建资料时的链接"),
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "source": _string("记忆来源"), "context": _string("创建行动时的情境"),
+        "deadline": {"type": "string", "format": "date"},
+        "related_items": {"type": "array", "items": {"type": "string"}, "description": "更新资料关联的任务/项目编号"},
+        "key": _string("创建定时任务的稳定英文 key；相同 key 不重复创建"),
+        "gtd_dir": _string("仅接管无目录标记的旧 GTD 定时任务时使用：经上下文核实的当前目录，且需提供完整 prompt"),
+        "prompt": _string("定时执行的完整事项、意图及结束条件；工具自动加入统一响应流程"),
+        "schedule": _string("Hermes 支持的一次性时间或周期表达式，例如 0 9 * * *"),
+        "timezone": _string("必须与 Hermes 时区一致；未提供时使用 Hermes 当前时区"),
+        "deliver": _string("origin、local 或单个 platform:chat_id；更新时省略保留现有接收人"),
+        "repeat": {"type": "integer", "minimum": 1, "description": "可选执行次数"},
+        "related_ids": {"type": "array", "items": {"type": "string"}, "description": "定时事项关联的稳定 GTD 内容编号"}
+    }}}, ["action"]))

@@ -8,12 +8,13 @@ from typing import Any, Callable
 
 try:
     from . import gtd_core as core
-    from . import reminders, materials
+    from . import reminders, materials, gtd_response
     from .schemas import ALL_SCHEMAS
 except ImportError:
     import gtd_core as core
     import reminders
     import materials
+    import gtd_response
     from schemas import ALL_SCHEMAS
 
 
@@ -417,7 +418,18 @@ def handle_memory(args: dict | None = None, **kwargs):
     return _run("gtd_memory", args, lambda data: {"message": "记忆操作完成", **core.memory(**data)})
 
 
+def handle_manage(args: dict | None = None, **kwargs):
+    return _run("gtd_manage", args, lambda data: gtd_response.manage(data, None, **kwargs))
+
+
+def manage_handler(dispatch):
+    def handler(args: dict | None = None, **kwargs):
+        return _run("gtd_manage", args, lambda data: gtd_response.manage(data, dispatch, **kwargs))
+    return handler
+
+
 HANDLERS = {
+    "gtd_manage": handle_manage,
     "gtd_memory": handle_memory,
     "gtd_relations": handle_relations,
     "gtd_materials_context": handle_materials_context,

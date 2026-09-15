@@ -118,6 +118,7 @@ Hermes 插件最小发布目录应包含：
 - `storage.py`
 - `reminders.py`
 - `materials.py`
+- `gtd_response.py`
 - `web_server.py`
 - `web_data.py`
 - `web/`
@@ -149,7 +150,8 @@ MIT
 | `gtd_reference_files` | 准备原文和附件的 Hermes MEDIA 回传标签 |
 | `gtd_reference_reindex` | 手工修改资料卡后重建索引，返回跳过记录 |
 | `gtd_notice_update` | 标记通知事项已处理或重新打开 |
-| `gtd_reminder` | 创建/更新、查询、暂停、试运行 Hermes 每日提醒 |
+| `gtd_manage` | 统一召回相关内容与定时任务，执行增删改查并复核 |
+| `gtd_reminder` | 每日 GTD 响应的兼容入口：启用、查询、暂停、试运行 |
 
 例：“找上次张三发的报名通知，把报名表发回来。”Agent 搜索资料，选中后
 通过 `gtd_reference_files` 获取原件，使用 Hermes 的 MEDIA 标签回复。
@@ -160,28 +162,82 @@ MIT
 图片仍可按标题、标签、来源检索。通知中的明确日期可存入 `notices`；含糊的
 “下周五”等表述要有可靠原始日期才能转换。
 
-## 每日自动提醒
+## 统一 GTD 响应：对话与定时触发
 
-在已连接的 Hermes 聊天里说：“每天北京时间九点提醒我今天要做的事。”
-Agent 调用 `gtd_reminder(action="enable", time="09:00", timezone="Asia/Shanghai")`。
-默认发回启用时的聊天；可显式指定一个 `platform:chat_id` 目标。
-改时间会更新已有任务，省略目标时保留原接收人，不重复创建任务。
+每次 GTD 对话或定时运行，都执行同一套流程：**召回并审视 → 执行 → 复核 → 反馈**。
+用户不需要选择“整理”或“通知”模式。审视范围是本次召回的相关任务、项目、资料、
+记忆及其定时任务；按关联继续召回必要上下文，不要求每次重读全部文件。
 
-- `status`：查看真实调度状态、下次执行时间及运行结果。
-- `disable`：暂停。
-- `run`：请求试运行，仍需检查后续执行和投递结果。
+例如“报名延期到下周五”，AI 会检查原资料、已有行动和对应跟进安排，修改任务日期并
+调整原定时任务；“已经报名了”则完成行动并关闭已无用途的跟进，原资料继续保留。
+定时运行也可以执行这些操作，包括理解新增资料、整理行动、创建后续定时任务、
+调整时间/频率、暂停或删除失效安排。是否需要这些操作由 Hermes 根据用户意图判断。
 
-每天包含逾期、今天/明天截止任务、等待跟进、通知日期和未整理数量；没有待办
-也简短告知。通知项通过 `gtd_notice_update` 标记处理后不再提醒。
-当前 `notifications.*`、`review.*` 配置字段只是偏好记录，**不会创建定时任务**。
+`gtd_manage` 是统一入口，底层复用现有内容工具与 Hermes 调度接口：
 
-需要支持 `ctx.dispatch_tool` 和 `cronjob_manage` 的 Hermes 版本；Gateway 必须
-在线，Hermes 时区须与指定时区一致，并配置可用模型及收发渠道。
-插件不自动安装 Hermes，不在启用前创建真实任务。配置成功不等于消息已经送达。
-QQ/微信的附件下载、文件发送和主动推送限制取决于对应适配器，部署后须实机验证。
+| 操作 | 用途 |
+|---|---|
+| `action="review"` | 同时召回内容与当前目录的真实定时任务，支持关键词、编号、关联扩展和分页 |
+| `action="get"` | 读取内容详情及最新 `revision`；`target="schedule"` 读取定时任务详情 |
+| `create/update/delete/complete` | 默认管理内容；编辑前使用最新 `revision` |
+| `target="schedule"` | 管理定时任务，支持 `create/update/delete/pause/resume/run` |
 
-官方接口参考：[定时任务](https://hermes-agent.nousresearch.com/docs/user-guide/features/cron/)、
-[插件接口](https://hermes-agent.nousresearch.com/docs/user-guide/features/plugins/)。
+任务、资料与记忆的具体分析仍可调用 `gtd_materials_*`、`gtd_memory` 等已有工具。
+这些是同一响应中的执行能力，不是互相独立的自动化模式。内容编辑与调度调整分别
+执行：如果内容已保存但调度失败，必须反馈部分成功，不能声称已经全部同步。
+
+新定时任务使用稳定 `key` 防止同一次创建被重复提交，提示词自动带上 GTD 数据目录、
+相关内容编号及统一响应流程。已有任务修改时保留未提供的字段和接收对象。
+运行中修改内容后，在同一响应内复核相关安排，不因自己的每次工具调用递归创建新唤醒。
+
+### 反馈规则
+
+- 有实际内容或定时任务变化：合并反馈做了什么、还缺什么。
+- 有执行错误、未核实的结果或新问题：明确反馈，不能静默掩盖。
+- 普通对话中的查询仍正常回答。
+- 常规定时触发无新变化、无新问题时，可以不发送消息。例如已知的“今天要洗衣服了”
+  无需再发一条回执；若用户明确要求每次都提醒，则保留该要求。
+- 定时静默使用 Hermes 的 `[SILENT]`，执行输出仍由 Hermes 留存；有实质反馈时不能
+  混入该标记，否则整条投递会被抑制。不能只因提醒触发就把现实事项标记完成。
+
+### 运行条件与现有任务
+
+Hermes Gateway、模型和渠道需要可用。定时运行中管理定时任务还需要部署环境设置：
+
+```yaml
+cron:
+  allow_agent_scheduling: true
+```
+
+插件检查并遵守该设置，不自行修改 Hermes 全局配置，不绕过限制直接写调度文件。
+调用已注册的 `cronjob_manage` 执行操作；新版 Hermes 的列表只返回提示词预览时，
+通过运行环境的只读 `cron.jobs.get_job` 接口获取完整任务。接口不可用会标记审视不完整。
+
+未带目录标记的历史 GTD 任务作为 `unscoped_jobs` 返回；其他定时任务提供简短概览，
+方便识别名称没有 GTD 但实际相关的安排。确认归属后，可通过 `update`
+提供 `data.gtd_dir` 和完整 `data.prompt` 纳入统一流程，同时保留暂停状态和原接收对象。
+属于其他明确数据目录的任务不会被修改。已有任务的提示词不会因更新插件而自动变化，
+需在 GTD 响应中明确更新后才使用新流程。
+
+插件注册的 skill 完整名称是 `gtd:gtd`（插件名:skill 名）。新定时任务使用该名称；
+通过 `gtd_manage` 更新已有任务时，会将旧的 `gtd` 引用替换为 `gtd:gtd`，保留其他
+skills、时间、提示词、接收对象和暂停状态。修复已有当前目录任务时，先用
+`target="schedule", action="get"` 获取真实 ID 与最新 `revision`，再用相同 ID 和
+revision 调用 `action="update", data={}`。只修复 skill 引用时不要调用
+`gtd_reminder(action="enable")`，因为 enable 会恢复调度。插件加载仍保持
+`ctx.register_skill("gtd", ...)`，命名空间由 Hermes 自动添加。
+
+`gtd_reminder` 保留为每日响应的兼容入口：`enable/status/disable/run`。默认每天
+Asia/Shanghai 09:00，必须与 Hermes 时区一致；省略接收目标时沿用原目标。
+新建或更新的每日任务使用统一流程，无变化时可静默。`gtd_config_set` 中的通知和回顾
+偏好本身不会创建定时任务。
+
+这套流程由对话或实际 Hermes 定时运行触发，不自带文件监听器；在外部直接改 Markdown
+或调度表，不会凭空启动一次 AI 响应，需要后续对话或定时触发再审视。网页服务不承担调度。
+自动测试覆盖工具操作、状态校验与模拟调度；真实模型判断及 QQ/微信投递仍需部署验收。
+
+接口参考：[Hermes 定时任务](https://hermes-agent.nousresearch.com/docs/user-guide/features/cron/)、
+[调度工具源码](https://github.com/NousResearch/hermes-agent/blob/main/tools/cronjob_tools.py)。
 
 ## 数据可靠性与兼容
 
@@ -200,7 +256,7 @@ QQ/微信的附件下载、文件发送和主动推送限制取决于对应适�
 
 连续发送同一件事的通知、教程文档、教学视频和截图即可。Hermes 根据上下文
 判断归属，调用 `gtd_message_capture` 保存为一组资料；可以说“发完了，整理一下”。
-仅时间接近不能证明是同一件事，有歧义时会询问。当前没有基于静默时长的后台归组任务。
+仅时间接近不能证明是同一件事，有歧义时会询问。当前没有基于静默时长的后台归组任务；对话或已配置的 GTD 定时触发可按统一流程整理相关材料。
 
 新增工具：
 

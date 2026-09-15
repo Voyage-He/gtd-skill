@@ -1,9 +1,10 @@
 name: gtd
-version: "2.2.0"
+version: "2.3.0"
 description: >
   Hermes Agent GTD plugin for capturing, organizing, reviewing, and completing
   work in a Markdown-based Getting Things Done system.
 provides_tools:
+  - gtd_manage
   - gtd_memory
   - gtd_relations
   - gtd_materials_context
