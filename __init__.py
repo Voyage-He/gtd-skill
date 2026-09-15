@@ -42,4 +42,4 @@ def register(ctx):
 
     if not SKILL_PATH.exists():
         raise FileNotFoundError(f"Hermes GTD skill not found: {SKILL_PATH}")
-    ctx.register_skill("gtd", str(SKILL_PATH))
+    ctx.register_skill("gtd", SKILL_PATH)

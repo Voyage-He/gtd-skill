@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 class FakeHermesContext:
     def __init__(self) -> None:
         self.tools: list[dict] = []
-        self.skills: list[tuple[str, str]] = []
+        self.skills: list[tuple[str, Path]] = []
 
     def register_tool(self, **kwargs):
         self.tools.append(kwargs)
@@ -50,7 +50,8 @@ class PluginRuntimeTests(unittest.TestCase):
         self.assertEqual(len(ctx.skills), 1)
         skill_name, skill_path = ctx.skills[0]
         self.assertEqual(skill_name, "gtd")
-        self.assertNotIn(".claude", skill_path)
+        self.assertIsInstance(skill_path, Path)
+        self.assertNotIn(".claude", skill_path.parts)
         self.assertTrue(Path(skill_path).exists())
 
     def test_schema_names_match_handlers(self):
