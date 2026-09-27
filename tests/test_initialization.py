@@ -22,14 +22,53 @@ class InitializationTests(unittest.TestCase):
         load_plugin_module().register(self.scheduler)
         self.handler = next(t['handler'] for t in self.scheduler.tools if t['name'] == 'gtd_init')
 
+    def selected(self):
+        return [
+            {'key': 'daily_reminder', 'frequency': 'daily', 'time': '07:00', 'prompt': '每日提醒'},
+            {'key': 'daily_summary', 'frequency': 'daily', 'time': '20:00', 'prompt': '每日总结'},
+        ]
+
     def call(self, **args):
+        args.setdefault('routines', self.selected())
         return decode(self.handler(args, task_id='init-session'))
+
+    def test_unspecified_preferences_create_only_data(self):
+        result = decode(self.handler({}))
+        self.assertTrue(result['ok'])
+        self.assertTrue(result['initialized'])
+        self.assertEqual(result['schedules']['status'], 'needs_preferences')
+        self.assertEqual(self.scheduler.calls, [])
+
+    def test_only_selected_evening_job_and_no_jobs_option(self):
+        self.assertTrue(self.call(routines=[])['ok'])
+        self.assertEqual(self.scheduler.calls, [])
+        self.assertTrue(self.call(routines=[self.selected()[1]])['ok'])
+        self.assertEqual(len(self.scheduler.jobs), 1)
+        self.assertEqual(self.scheduler.jobs[0]['schedule'], '0 20 * * *')
+
+    def test_week_end_and_week_start_at_user_chosen_times(self):
+        routines = [
+            {'key': 'weekly_review', 'frequency': 'weekly', 'weekday': 0,
+             'time': '20:30', 'prompt': '每周最后一天晚上回顾'},
+            {'key': 'weekly_plan', 'frequency': 'weekly', 'weekday': 1,
+             'time': '08:00', 'prompt': '每周第一天早上计划'},
+        ]
+        self.assertTrue(self.call(routines=routines)['ok'])
+        self.assertEqual([j['schedule'] for j in self.scheduler.jobs], ['30 20 * * 0', '0 8 * * 1'])
+
+    def test_missing_time_or_weekday_never_chooses_defaults(self):
+        for routine in (
+            {'key': 'morning', 'frequency': 'daily', 'prompt': '提醒'},
+            {'key': 'week', 'frequency': 'weekly', 'time': '08:00', 'prompt': '回顾'},
+        ):
+            self.assertFalse(self.call(routines=[routine])['ok'])
+        self.assertEqual(self.scheduler.calls, [])
 
     def test_defaults_registration_and_retry_preserve_user_changes(self):
         self.assertEqual(self.scheduler.calls, [])
         result = self.call()
         self.assertTrue(result['ok'], result)
-        self.assertEqual([j['schedule'] for j in self.scheduler.jobs], ['0 9 * * *', '0 21 * * *'])
+        self.assertEqual([j['schedule'] for j in self.scheduler.jobs], ['0 7 * * *', '0 20 * * *'])
         self.assertFalse(result['schedules']['delivery_verified'])
         for job in self.scheduler.jobs:
             self.assertEqual(job['skills'], ['gtd:gtd'])
@@ -37,7 +76,7 @@ class InitializationTests(unittest.TestCase):
             self.assertIn(str(self.root), job['prompt'])
         self.scheduler.jobs[0].update(enabled=False, schedule='0 8 * * *', deliver='qqbot:me', prompt='custom')
         before = copy.deepcopy(self.scheduler.jobs)
-        self.assertTrue(self.call(reminder_time='10:00', deliver='telegram:other')['ok'])
+        self.assertTrue(self.call(deliver='telegram:other')['ok'])
         self.assertEqual(before, self.scheduler.jobs)
         self.assertTrue(all(kw['task_id'] == 'init-session' for _, kw in self.scheduler.calls))
 
@@ -52,7 +91,9 @@ class InitializationTests(unittest.TestCase):
 
     def test_custom_times_and_runtime_timezone(self):
         with patch.object(reminders, 'runtime_timezone', return_value='Europe/London'):
-            result = self.call(reminder_time='07:35', summary_time='22:15', deliver='telegram:me')
+            routines = self.selected()
+            routines[0]['time'], routines[1]['time'] = '07:35', '22:15'
+            result = self.call(routines=routines, deliver='telegram:me')
         self.assertTrue(result['ok'], result)
         self.assertEqual(result['schedules']['timezone'], 'Europe/London')
         self.assertEqual([j['schedule'] for j in self.scheduler.jobs], ['35 7 * * *', '15 22 * * *'])
@@ -63,14 +104,14 @@ class InitializationTests(unittest.TestCase):
         self.assertTrue((self.root / 'inbox.md').exists())
 
     def test_missing_dispatch_reports_partial_success(self):
-        result = decode(tools.handle_init({}))
+        result = decode(tools.handle_init({'routines': self.selected()}))
         self.assertFalse(result['ok'])
         self.assertTrue(result['initialized'])
         self.assertEqual(result['schedules']['status'], 'incomplete')
         self.assertTrue((self.root / 'inbox.md').exists())
 
     def test_invalid_options_do_not_create_jobs(self):
-        for args in ({'summary_time': '25:00'}, {'timezone': 'UTC'}, {'deliver': 'all'}):
+        for args in ({'routines': [{**self.selected()[0], 'time': '25:00'}]}, {'timezone': 'UTC'}, {'deliver': 'all'}):
             self.assertFalse(self.call(**args)['ok'])
         self.assertEqual(self.scheduler.jobs, [])
 
@@ -82,7 +123,7 @@ class InitializationTests(unittest.TestCase):
                 return {'success': False, 'error': 'unavailable'}
             return dispatch(name, data, **kwargs)
 
-        result = decode(tools.init_handler(fail_summary)({}))
+        result = decode(tools.init_handler(fail_summary)({'routines': self.selected()}))
         self.assertFalse(result['ok'])
         self.assertEqual(len(self.scheduler.jobs), 1)
         self.assertTrue(self.call()['ok'])

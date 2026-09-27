@@ -3,13 +3,25 @@
 # ── gtd_init ──────────────────────────────────────────
 INIT = {
     "name": "gtd_init",
-    "description": "初始化 GTD 数据并补齐每日提醒和每日总结的 Hermes cron 调度。幂等保留已有数据、调度时间、接收对象和暂停状态；setup_schedules=false 可仅初始化数据。默认目录 ~/gtd，可用 GTD_DIR 覆盖。",
+    "description": "对话式初始化 GTD。未提供 routines 时只初始化数据并返回 needs_preferences，让用户决定内容、每天或每周、具体星期和时间。只创建用户明确选择的安排，保留已有任务；不自动启用任何早晚默认调度。",
     "parameters": {
         "type": "object",
         "properties": {
-            "setup_schedules": {"type": "boolean", "description": "默认 true，补齐常规调度；false 仅初始化数据"},
-            "reminder_time": {"type": "string", "description": "新建每日提醒时间 HH:MM，默认 09:00"},
-            "summary_time": {"type": "string", "description": "新建每日总结时间 HH:MM，默认 21:00"},
+            "setup_schedules": {"type": "boolean", "description": "false 仅初始化数据；省略时根据 routines 处理，不代选安排"},
+            "routines": {
+                "type": "array", "description": "对话中用户选定的安排；省略表示待询问，空列表表示暂不安排。沿用稳定 key 以免重复创建。",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "key": {"type": "string", "description": "稳定唯一标识，例如 daily_reminder、daily_summary、weekly_review、weekly_plan"},
+                        "frequency": {"type": "string", "enum": ["daily", "weekly"]},
+                        "time": {"type": "string", "description": "用户指定的 HH:MM，没有默认时间"},
+                        "weekday": {"type": "integer", "minimum": 0, "maximum": 6, "description": "weekly 必填：0 周日、1 周一至 6 周六；周首/周末应按用户一周的定义换算"},
+                        "prompt": {"type": "string", "description": "用户选择的提醒、总结、回顾或计划内容；注明每次发送还是无变化静默"},
+                    },
+                    "required": ["key", "frequency", "time", "prompt"],
+                },
+            },
             "timezone": {"type": "string", "description": "默认 Hermes 当前时区；显式指定时必须与运行环境一致"},
             "deliver": {"type": "string", "description": "新建任务接收目标，默认 origin；或单个 platform:chat_id"},
         },

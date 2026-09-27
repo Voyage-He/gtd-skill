@@ -21,27 +21,40 @@ def initialize(args: dict, dispatch, **kwargs) -> dict:
     """Fill missing routine jobs without changing existing cadence or pause state."""
     if not args.get('setup_schedules', True):
         return {'status': 'skipped', 'jobs': [], 'delivery_verified': False}
+    if 'routines' not in args:
+        return {'status': 'needs_preferences', 'jobs': [], 'delivery_verified': False,
+                'next_step': '在对话中询问用户想要哪些提醒、总结或回顾，以及每天或每周、具体星期和时间；不要代选。'}
+    if args['routines'] == []:
+        return {'status': 'skipped', 'jobs': [], 'delivery_verified': False}
     return core._serialized(_initialize)(args, dispatch, **kwargs)
 
 
 def _initialize(args, dispatch, **kwargs):
-    routines = (
-        ('daily_reminder', 'gtd-daily-', args.get('reminder_time', '09:00'),
-         '每日提醒：调用 gtd_daily_check，结合下一步行动，简洁列出今天的重点、'
-         '逾期与即将截止事项、等待跟进和待整理数量。每天发送；没有待办时简短说明。'
-         '不能因为提醒触发就把现实事项标记完成。'),
-        ('daily_summary', 'gtd-summary-', args.get('summary_time', '21:00'),
-         '每日总结：调用 gtd_daily_check、gtd_list_actions(show_all=true)，按今天的'
-         ' completed 日期核实已完成事项，必要时读取当前目录的归档，结合收集箱和相关资料，'
-         '总结今日已记录的进展、未完成事项及明日重点。每天发送；无记录时如实简短说明。'
-         '不能把所有历史完成项算作今天完成，也不能推断未记录的现实进展或自动完成任务。'),
-    )
+    routines = args['routines']
     results = []
     try:
         # Validate all options before the first external mutation.
-        for _, _, clock, _ in routines:
+        if not isinstance(routines, list):
+            raise core.GTDValidationError('routines 必须为列表')
+        keys = set()
+        for routine in routines:
+            key = routine.get('key', '')
+            if not re.fullmatch(r'[a-zA-Z0-9_-]{1,80}', key) or key in keys:
+                raise core.GTDValidationError('每项安排需要唯一且稳定的 key')
+            keys.add(key)
+            clock = routine.get('time')
             if not isinstance(clock, str) or not re.fullmatch(r'(?:[01]\d|2[0-3]):[0-5]\d', clock):
-                raise core.GTDValidationError('提醒和总结时间必须为 HH:MM')
+                raise core.GTDValidationError('每项安排必须明确指定 HH:MM 时间')
+            if routine.get('frequency') not in {'daily', 'weekly'}:
+                raise core.GTDValidationError('每项安排必须明确选择 daily 或 weekly')
+            if routine['frequency'] == 'weekly':
+                day = routine.get('weekday')
+                if type(day) is not int or not 0 <= day <= 6:
+                    raise core.GTDValidationError('每周安排必须明确 weekday：0 为周日，1 为周一，至 6 为周六')
+            elif 'weekday' in routine:
+                raise core.GTDValidationError('每天安排不应提供 weekday')
+            if not isinstance(routine.get('prompt'), str) or not routine['prompt'].strip():
+                raise core.GTDValidationError('每项安排需要用户选择的提醒、总结或回顾内容 prompt')
         deliver = args.get('deliver', 'origin')
         if not isinstance(deliver, str) or deliver in {'local', 'all', ''} or ',' in deliver:
             raise core.GTDValidationError('请选择 origin 或一个明确的 platform:chat_id 目标')
@@ -55,8 +68,11 @@ def _initialize(args, dispatch, **kwargs):
         return {'status': 'incomplete', 'jobs': [], 'error': str(exc), 'delivery_verified': False}
 
     suffix = hashlib.sha256(str(core.get_gtd_dir()).encode()).hexdigest()[:12]
-    for key, prefix, clock, instruction in routines:
-        name = prefix + suffix
+    for routine in routines:
+        key, clock, instruction = routine['key'], routine['time'], routine['prompt']
+        # Preserve names used by the earlier daily shortcuts.
+        name = {'daily_reminder': 'gtd-daily-' + suffix,
+                'daily_summary': 'gtd-summary-' + suffix}.get(key, 'gtd-' + suffix + '-' + key)
         entry = {'routine': key, 'name': name}
         try:
             existing = [job for job in jobs if job.get('name') == name]
@@ -67,7 +83,7 @@ def _initialize(args, dispatch, **kwargs):
             else:
                 hour, minute = map(int, clock.split(':'))
                 payload = {'action': 'create', 'name': name,
-                           'schedule': f'{minute} {hour} * * *',
+                           'schedule': f"{minute} {hour} * * {routine['weekday'] if routine['frequency'] == 'weekly' else '*'}",
                            'prompt': response_prompt(instruction), 'deliver': deliver,
                            'skills': scheduled_skills(), 'attach_to_session': True}
                 scheduler_call(dispatch, payload, **kwargs)

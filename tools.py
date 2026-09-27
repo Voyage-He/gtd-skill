@@ -158,6 +158,7 @@ def init_handler(dispatch):
                     'message': f"GTD 数据已初始化，目录: {core.get_gtd_dir()}；" +
                     {'ready': '常规调度已核实（已有任务保留原状态）；实际投递需要 Gateway 和渠道可用',
                      'skipped': '已跳过常规调度',
+                     'needs_preferences': '请在对话中选择调度内容、频率、星期和具体时间；尚未创建调度',
                      'incomplete': '常规调度未全部完成，请检查 schedules 后重试 gtd_init'}[schedules['status']]}
         return _run('gtd_init', args, operation)
     return handler

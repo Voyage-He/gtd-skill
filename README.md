@@ -35,35 +35,48 @@ export GTD_DIR="/path/to/gtd"
 
 首次使用时让 Agent 执行“初始化 GTD”，插件会调用 `gtd_init` 幂等创建缺失文件，不会覆盖已有 Markdown 数据。
 
-初始化还会通过 Hermes cron 补齐两项常规安排，默认按 **Hermes 当前时区**执行：
+初始化通过对话确定常规安排。直接调用 `gtd_init` 只创建数据，返回
+`schedules.status="needs_preferences"`，不会自动启用早晚任务或替用户选择时间。
+Agent 会结合用户已经说过的偏好，询问还缺少的安排：
 
-| 安排 | 默认时间 | 内容 |
-|---|---|---|
-| 每日提醒 | 每天 09:00 | 今日重点、逾期及即将截止事项、等待跟进、待整理数量 |
-| 每日总结 | 每天 21:00 | 今日已记录的进展、未完成事项、明日重点 |
+- 想要提醒、总结、回顾还是计划？只要早上、只要晚上、两者都要或暂不安排均可。
+- 每天还是每周？每周在哪一天？“一周第一天/最后一天”按用户的一周定义换算，含糊时询问。
+- 每项具体几点几分？“早上”“晚上”不足以确定时间，不默认九点或其他时间。
 
-两项默认每天发送简短反馈；没有记录时如实说明。默认投递到初始化会话的 `origin`，
-也可用 `deliver` 指定一个 `platform:chat_id`。例如：
+用户可以直接说：“每天早上七点提醒，周日晚上八点半回顾，周一早上八点安排本周。”
+信息齐全就执行，不需要再走一轮确认。只询问缺失信息，用户不用填写 cron 表达式。
+例如用户选择周日晚回顾和周一早计划后，Agent 可调用：
 
 ```json
-{"reminder_time": "08:30", "summary_time": "22:00", "timezone": "Asia/Shanghai", "deliver": "telegram:123456"}
+{
+  "routines": [
+    {"key": "weekly_review", "frequency": "weekly", "weekday": 0, "time": "20:30", "prompt": "每周回顾已记录进展、未完成事项和待整理内容；每次发送简短总结"},
+    {"key": "weekly_plan", "frequency": "weekly", "weekday": 1, "time": "08:00", "prompt": "结合下一步行动、截止事项和项目状态安排本周重点；每次发送"}
+  ]
+}
 ```
 
-显式指定的时区必须与 Hermes 当前时区一致。重复初始化只补建缺失任务，保留已有任务
-的时间、提示词、接收对象与暂停状态；旧版 `gtd_reminder` 创建的每日提醒会直接复用。
-修改已存在的安排使用 `gtd_manage(target="schedule", action="update", ...)`。
-仅创建数据可传 `{"setup_schedules": false}`；这不会暂停或删除已有调度。
+`routines` 只包含用户选定的安排；每天用 `frequency="daily"`，每周用 `weekly`
+并指定 `weekday`（0 周日、1 周一至 6 周六）。每项必须明确 `time`，没有默认频率或时间。
+时间使用 Hermes 当前时区，向用户说明；若显式提供 `timezone` 则必须与 Hermes 一致。
+新任务默认投递到当前会话 `origin`，可用 `deliver` 指定单个 `platform:chat_id`。
 
-返回中的 `initialized: true` 表示数据已就绪；`schedules.status` 为 `ready`、`skipped`
-或 `incomplete`。调度失败时返回 `ok: false`，保留已创建数据和成功的任务，逐项说明错误；
-修复运行环境或投递目标后再次初始化即可补齐，不应盲目手工重复创建。任务已登记并不等于
-已经投递成功，实际运行需要 Hermes Gateway、模型和渠道可用。插件加载和网页启动不会创建 cron。
+重复提交相同 `key` 只补建缺失任务，保留已有任务的时间、内容、接收对象和暂停状态；
+`daily_reminder`、`daily_summary` 兼容之前的任务名。已有安排通过 `gtd_manage` 查询和修改，
+不为改时间换一个 key 创建副本。`routines=[]` 或 `setup_schedules=false` 表示此次不创建安排，
+不会暂停或删除已有任务。
+
+`initialized: true` 表示数据已就绪，调度状态另看 `schedules.status`：
+`needs_preferences` 待对话选择，`ready` 已核实所选任务，`skipped` 跳过，`incomplete` 部分失败。
+失败时保留数据及成功任务，返回具体错误；修复后用同一组 key 重试补齐。
+任务已登记不代表已送达；实际运行需要 Hermes Gateway、模型和渠道可用。
+插件加载和网页启动不会创建 cron。
 
 ## Tools
 
 | Tool | 典型说法 | 关键参数 |
 |------|----------|----------|
-| `gtd_init` | 初始化 GTD | 可选 `setup_schedules`, `reminder_time`, `summary_time`, `timezone`, `deliver` |
+| `gtd_init` | 初始化 GTD | 可选 `routines`, `setup_schedules`, `timezone`, `deliver` |
 | `gtd_capture` | 记录买牛奶 | `content` |
 | `gtd_inbox` | 看看收集箱 | 无 |
 | `gtd_inbox_process` | 把第 1 条整理成下一步行动 | `index`, `target`, 可选 `context`, `deadline`, `delegate`, `estimated`, `project_name`, `first_action` |

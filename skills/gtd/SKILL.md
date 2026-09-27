@@ -163,7 +163,7 @@ or other automatic startup mechanisms as part of this workflow.
 ## Tool Mapping
 
 - Unified recall and content/schedule CRUD: call `gtd_manage`; follow the response workflow above.
-- Initialize GTD: call `gtd_init`; it also fills missing daily reminder and summary jobs.
+- Initialize GTD: follow the conversational initialization workflow below, then call `gtd_init` with the selected routines.
 - Capture an idea or task: call `gtd_capture` with `content`.
 - View the inbox: call `gtd_inbox`.
 - Process an inbox item: call `gtd_inbox_process` with `index` and one target.
@@ -298,17 +298,41 @@ must be reported; a local path alone is not a successful file return.
 
 ## Scheduled GTD Responses
 
-On initialization, `gtd_init` creates missing daily reminder (09:00) and daily
-summary (21:00) jobs in Hermes' current timezone, delivered to `origin` by default.
-Pass `reminder_time`, `summary_time`, `timezone`, or `deliver` when requested;
-the timezone must match Hermes. These routine prompts request a brief daily
-message, including when there are no recorded items. Existing jobs retain their
-time, recipient, prompt and pause state, including legacy daily reminders.
-Use `gtd_manage` to change existing jobs, not repeated initialization.
-For data-only setup or file repair use `setup_schedules=false`; it leaves jobs alone.
-Inspect `initialized` and `schedules` separately: `ok=false` can mean data is ready
-but scheduling failed or readback is uncertain. Report each incomplete part and
-retry initialization after fixing the cause; never claim delivery is verified.
+### Conversational initialization
+
+When the user initializes GTD, help them choose their own routine schedule.
+Calling `gtd_init` without `routines` initializes data and returns
+`needs_preferences`; it creates no jobs. Do not treat this as completed schedule
+setup or use `gtd_reminder` to silently enable its legacy defaults.
+
+Use preferences already provided in the conversation. Ask only for missing choices:
+what they want (reminders, summaries, reviews, plans), daily or weekly, which day
+for weekly work, and the exact time for each. Morning only, evening only, both,
+weekly only, combinations and no schedule are all valid. “Morning/evening” does not
+supply an exact time: never invent 07:00, 08:00 or 09:00. For “first/last day of my
+week”, establish which weekdays the user means from context or a short question;
+do not silently equate a workweek with a calendar week. Do not ask users for cron.
+For example: “你想安排哪些提醒或总结？每天还是每周、哪一天、几点？”
+Offer examples as choices, never as already selected defaults. If the request
+already supplies the details, act without a redundant confirmation round.
+
+Then pass only selected `routines`, each with a stable `key`, `frequency` (daily or
+weekly), exact `time` (HH:MM), `weekday` for weekly (0 Sunday, 1 Monday through 6
+Saturday), and `prompt` reflecting the requested purpose and feedback preference.
+For summaries/reviews, require evidence for the requested period, including archive
+records when necessary; never count all historical completions as today's progress
+or mark real-world tasks complete merely because a schedule fired. State the Hermes
+timezone and delivery target in the result; resolve conflicting timezone preferences
+before creating jobs. The tools enforce that an explicit timezone matches Hermes.
+
+Read existing schedules before configuring an existing system. Reuse stable keys
+(`daily_reminder`, `daily_summary`, `weekly_review`, `weekly_plan` when applicable);
+use `gtd_manage` to update existing jobs rather than inventing a new key. Initialization
+preserves existing prompts, cadence, recipients and pause state. Pass `routines=[]`
+when the user declines schedules or `setup_schedules=false` for data-only repair;
+neither disables existing jobs. Inspect `initialized` and `schedules` separately:
+`incomplete` may follow successful data creation or partial scheduling. Report errors,
+retry with the same keys after fixing the cause, and never claim verified delivery.
 Plugin registration and web-server startup do not schedule jobs.
 
 Use `gtd_manage(target="schedule", ...)` to manage scheduled work as part of the
