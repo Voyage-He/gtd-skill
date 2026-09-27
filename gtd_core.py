@@ -1611,30 +1611,34 @@ def create_weekly_review() -> dict[str, Any]:
 
 
 def get_config_path() -> Path:
-    yaml = _optional_yaml()
-    if yaml is not None:
-        return gtd_path("config.yaml")
-    return gtd_path("config.json")
+    yaml_path, json_path = gtd_path("config.yaml"), gtd_path("config.json")
+    if yaml_path.exists() and json_path.exists():
+        raise GTDValidationError('config.yaml 与 config.json 同时存在；请备份并确认保留哪份配置，不能自动覆盖')
+    if yaml_path.exists():
+        return yaml_path
+    if json_path.exists():
+        return json_path
+    return yaml_path if _optional_yaml() is not None else json_path
 
 
 def load_config() -> dict[str, Any]:
-    yaml = _optional_yaml()
-    yaml_path = gtd_path("config.yaml")
-    json_path = gtd_path("config.json")
-
+    path = get_config_path()
     config: dict[str, Any] = {}
-    if yaml is not None and yaml_path.exists():
-        loaded = yaml.safe_load(read_text(yaml_path)) or {}
-        if isinstance(loaded, dict):
-            config = loaded
-    elif json_path.exists():
-        loaded = json.loads(read_text(json_path) or "{}")
-        if isinstance(loaded, dict):
-            config = loaded
+    if path.exists():
+        if path.suffix == '.yaml':
+            yaml = _optional_yaml()
+            if yaml is None:
+                raise GTDValidationError('已有 config.yaml，需要安装 PyYAML 才能读取；未创建默认配置')
+            loaded = yaml.safe_load(read_text(path))
+        else:
+            loaded = json.loads(read_text(path))
+        if not isinstance(loaded, dict):
+            raise GTDValidationError('配置文件必须是 object；请修复原文件，未使用默认配置覆盖')
+        config = loaded
 
     merged = deepcopy(DEFAULT_CONFIG)
     _merge_dict(merged, config)
-    if not yaml_path.exists() and not json_path.exists():
+    if not path.exists():
         save_config(merged)
     return merged
 
@@ -1643,7 +1647,9 @@ def save_config(config: dict[str, Any]) -> Path:
     ensure_gtd_dir()
     yaml = _optional_yaml()
     path = get_config_path()
-    if yaml is not None:
+    if path.suffix == '.yaml':
+        if yaml is None:
+            raise GTDValidationError('已有 config.yaml，需要安装 PyYAML 才能写入；原文件未修改')
         write_text(path, yaml.safe_dump(config, allow_unicode=True, sort_keys=False))
     else:
         write_text(path, json.dumps(config, ensure_ascii=False, indent=2) + "\n")

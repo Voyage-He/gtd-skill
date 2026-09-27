@@ -3,7 +3,7 @@
 # ── gtd_init ──────────────────────────────────────────
 INIT = {
     "name": "gtd_init",
-    "description": "对话式初始化 GTD。未提供 routines 时只初始化数据并返回 needs_preferences，让用户决定内容、每天或每周、具体星期和时间。只创建用户明确选择的安排，保留已有任务；不自动启用任何早晚默认调度。",
+    "description": "对话式初始化 GTD。未提供 routines 时初始化数据并复核既有选择和真实调度；首次未配置时返回 needs_preferences，让用户决定内容、每天或每周、具体星期和时间。只创建用户明确选择的安排，保留已有任务；不自动启用任何早晚默认调度。",
     "parameters": {
         "type": "object",
         "properties": {

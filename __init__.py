@@ -22,6 +22,8 @@ def _load_runtime():
 def register(ctx):
     """Register GTD tools and the GTD skill with Hermes."""
 
+    if not SKILL_PATH.is_file():
+        raise FileNotFoundError(f"Hermes GTD skill not found: {SKILL_PATH}")
     all_schemas, handlers, reminder_handler, manage_handler, init_handler = _load_runtime()
     handlers = dict(handlers)
     handlers["gtd_init"] = init_handler(getattr(ctx, "dispatch_tool", None))
@@ -41,6 +43,4 @@ def register(ctx):
             description=schema.get("description", ""),
         )
 
-    if not SKILL_PATH.exists():
-        raise FileNotFoundError(f"Hermes GTD skill not found: {SKILL_PATH}")
     ctx.register_skill("gtd", SKILL_PATH)

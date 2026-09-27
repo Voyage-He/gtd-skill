@@ -37,7 +37,7 @@ class InitializationTests(unittest.TestCase):
         self.assertTrue(result['ok'])
         self.assertTrue(result['initialized'])
         self.assertEqual(result['schedules']['status'], 'needs_preferences')
-        self.assertEqual(self.scheduler.calls, [])
+        self.assertEqual([c[0]['action'] for c in self.scheduler.calls], ['list'])
 
     def test_only_selected_evening_job_and_no_jobs_option(self):
         self.assertTrue(self.call(routines=[])['ok'])

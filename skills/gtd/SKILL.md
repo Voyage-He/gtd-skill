@@ -301,8 +301,10 @@ must be reported; a local path alone is not a successful file return.
 ### Conversational initialization
 
 When the user initializes GTD, help them choose their own routine schedule.
-Calling `gtd_init` without `routines` initializes data and returns
-`needs_preferences`; it creates no jobs. Do not treat this as completed schedule
+Calling `gtd_init` without `routines` initializes data, checks remembered choices
+and existing Hermes jobs, and creates no jobs. Only `needs_preferences` requires
+collecting new preferences; `ready` reuses existing jobs and `skipped` can reflect
+a remembered choice not to schedule. Do not treat this as completed schedule
 setup or use `gtd_reminder` to silently enable its legacy defaults.
 
 Use preferences already provided in the conversation. Ask only for missing choices:
@@ -334,6 +336,14 @@ neither disables existing jobs. Inspect `initialized` and `schedules` separately
 `incomplete` may follow successful data creation or partial scheduling. Report errors,
 retry with the same keys after fixing the cause, and never claim verified delivery.
 Plugin registration and web-server startup do not schedule jobs.
+On reinstall/update, retain the same data directory and Hermes cron storage.
+`schedule-setup.json` in the data directory tracks selected job names, not a plan
+to replay old settings. Missing or duplicate saved jobs need attention; do not
+recreate deleted schedules unless the user requests it. A scheduler error does not
+mean no schedules exist. Older installs without this file discover existing scoped
+jobs first. `setup_schedules=false` does not erase remembered choices. Changing
+GTD_DIR is a migration: existing scheduled prompts still reference the old path.
+
 
 Use `gtd_manage(target="schedule", ...)` to manage scheduled work as part of the
 unified response. Hermes performs the actual wakeup and delivery; the optional web

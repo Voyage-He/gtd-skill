@@ -7,8 +7,8 @@ Hermes Agent GTD 插件基于 Getting Things Done 方法论，通过 `gtd_*` too
 ### 用户级插件
 
 ```bash
-mkdir -p ~/.hermes/plugins
-cp -R /path/to/gtd-skill ~/.hermes/plugins/gtd
+mkdir -p ~/.hermes/plugins/gtd
+cp -R /path/to/gtd-skill/. ~/.hermes/plugins/gtd/
 hermes plugins enable gtd
 ```
 
@@ -19,11 +19,42 @@ hermes plugins enable gtd
 项目本地插件位于当前项目的 `.hermes/plugins/`，只应在信任该项目内容时启用：
 
 ```bash
-mkdir -p .hermes/plugins
-cp -R /path/to/gtd-skill .hermes/plugins/gtd
+mkdir -p .hermes/plugins/gtd
+cp -R /path/to/gtd-skill/. .hermes/plugins/gtd/
 export HERMES_ENABLE_PROJECT_PLUGINS=true
 hermes plugins enable gtd
 ```
+
+## 重装与更新
+
+插件代码、GTD 数据和 Hermes cron 是三份独立状态。更新只替换插件代码；保留原来的
+`GTD_DIR`（默认 `~/gtd`）及 Hermes 自己的调度存储。把数据放在插件目录之外，避免替换
+或卸载代码时一起删掉。迁移数据目录属于单独操作：调度的目录标记和名称与原路径绑定，
+不能只改 `GTD_DIR` 后就认为原任务会自动迁移。
+
+更新前停止使用该插件的 Hermes 进程和独立网页服务，备份整个数据目录、Hermes 调度存储
+及旧插件目录，再将完整新版发布文件复制到插件目录。上面的 `源目录/.` 写法在目标已存在时
+仍复制目录内容，不会多套一层 `gtd-skill/`。不要只更新 `__init__.py` 或几个 Python 文件。
+复制完成后重新启动 Hermes 与需要使用的网页服务，以免旧进程继续运行已加载的代码。
+回退代码时也应重启；数据格式升级后的回退需使用对应备份，不能保证任意版本向后兼容。
+
+在新会话中调用 `gtd_init` 复核：
+
+- 已配置过的任务按 Hermes 中的真实时间、接收对象、提示词和暂停状态继续使用。
+- 用户选择过的调度名称记录在数据目录的 `schedule-setup.json`；“暂不安排”也会记住。
+  `setup_schedules=false` 只是本次跳过，不改变这份选择记录。
+- 记录中的任务若缺失或重名，会报告待处理，初始化不会自动恢复被删除的任务。
+  显式重新提交用户选定的 `routines` 才会补建缺失任务。
+- 旧版本没有记录时，会先查询当前目录的真实调度；调度不可用会报告错误，不当作空列表。
+- 更新不自动改写已有任务提示词或恢复暂停任务；需要更新指令时通过 `gtd_manage` 操作原任务。
+
+已有 `config.json` 不会因为后来安装 PyYAML 而被默认 YAML 配置取代。已有 `config.yaml`
+在缺少 PyYAML 时保留原文件，配置读写明确报错，不另建默认 JSON。两份配置同时存在时
+需要先备份并核对保留哪份；损坏或非对象配置不会静默回退默认值。新版或损坏的调度初始化
+记录也会报错保留，避免旧代码覆盖未知格式。
+
+自动测试覆盖新目录加载、数据字节保留、依赖变化、调度复用与缺失检查；真实 Hermes
+插件重载、模型执行和渠道送达仍需在实际部署中验收。
 
 ## 数据目录
 
@@ -35,7 +66,7 @@ export GTD_DIR="/path/to/gtd"
 
 首次使用时让 Agent 执行“初始化 GTD”，插件会调用 `gtd_init` 幂等创建缺失文件，不会覆盖已有 Markdown 数据。
 
-初始化通过对话确定常规安排。直接调用 `gtd_init` 只创建数据，返回
+初始化通过对话确定常规安排。首次直接调用 `gtd_init` 会创建数据并检查已有调度；没有既有选择时返回
 `schedules.status="needs_preferences"`，不会自动启用早晚任务或替用户选择时间。
 Agent 会结合用户已经说过的偏好，询问还缺少的安排：
 

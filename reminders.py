@@ -1,15 +1,16 @@
 """Daily reminders delegated to Hermes' registered cron tool; no local scheduler."""
 from __future__ import annotations
 import hashlib
+import json
 import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 try:
     from . import gtd_core as core
-    from .gtd_response import response_prompt, scheduler_call, list_jobs, scheduled_skills
+    from .gtd_response import response_prompt, scheduler_call, list_jobs, scheduled_skills, belongs
 except ImportError:
     import gtd_core as core
-    from gtd_response import response_prompt, scheduler_call, list_jobs, scheduled_skills
+    from gtd_response import response_prompt, scheduler_call, list_jobs, scheduled_skills, belongs
 
 
 def runtime_timezone() -> str:
@@ -21,12 +22,71 @@ def initialize(args: dict, dispatch, **kwargs) -> dict:
     """Fill missing routine jobs without changing existing cadence or pause state."""
     if not args.get('setup_schedules', True):
         return {'status': 'skipped', 'jobs': [], 'delivery_verified': False}
+    return core._serialized(_initialize_selection)(args, dispatch, **kwargs)
+
+
+def _initialize_selection(args, dispatch, **kwargs):
+    path = core.gtd_path('schedule-setup.json')
+    saved = None
+    try:
+        if path.exists():
+            saved = json.loads(core.read_text(path))
+            if (not isinstance(saved, dict) or saved.get('version') != 1
+                    or not isinstance(saved.get('names'), list)
+                    or any(not isinstance(name, str) or not name for name in saved['names'])
+                    or len(saved['names']) != len(set(saved['names']))):
+                raise core.GTDValidationError('不支持或损坏的 schedule-setup.json；请检查原文件，未覆盖')
+    except Exception as exc:
+        return {'status': 'incomplete', 'jobs': [], 'error': str(exc), 'delivery_verified': False}
     if 'routines' not in args:
+        # Older installations have no inventory. Inspect Hermes before asking
+        # the user to configure schedules again; never recreate from disk alone.
+        if saved is None and dispatch is not None:
+            try:
+                jobs, notes = list_jobs(dispatch, **kwargs)
+                existing = [job for job in jobs if belongs(job)]
+                if existing:
+                    names = [job.get('name') for job in existing]
+                    if len(names) != len(set(names)):
+                        raise core.GTDValidationError('当前目录存在同名调度，请先核对重复任务；未自动修改')
+                    return {'status': 'ready', 'jobs': existing, 'notes': notes,
+                            'discovered': True, 'delivery_verified': False,
+                            'next_step': '已发现当前目录的既有调度，沿用原安排；仅在用户要求时增改。'}
+            except Exception as exc:
+                return {'status': 'incomplete', 'jobs': [], 'error': str(exc), 'delivery_verified': False}
+        if saved is not None:
+            if not saved['names']:
+                return {'status': 'skipped', 'jobs': [], 'remembered': True, 'delivery_verified': False}
+            try:
+                jobs, notes = list_jobs(dispatch, **kwargs)
+                results = []
+                for name in saved['names']:
+                    matches = [job for job in jobs if job.get('name') == name]
+                    results.append({'name': name, 'status': 'existing' if len(matches) == 1 else 'needs_attention',
+                                    'jobs': matches})
+                return {'status': 'ready' if all(r['status'] == 'existing' for r in results) else 'incomplete',
+                        'jobs': results, 'notes': notes, 'remembered': True, 'delivery_verified': False,
+                        'next_step': '沿用真实调度状态；缺失或重复任务需说明并与用户确定，不自动重建或恢复。'}
+            except Exception as exc:
+                return {'status': 'incomplete', 'jobs': [], 'error': str(exc), 'delivery_verified': False}
         return {'status': 'needs_preferences', 'jobs': [], 'delivery_verified': False,
                 'next_step': '在对话中询问用户想要哪些提醒、总结或回顾，以及每天或每周、具体星期和时间；不要代选。'}
     if args['routines'] == []:
+        core.write_text(path, json.dumps({'version': 1, 'names': []}) + '\n')
         return {'status': 'skipped', 'jobs': [], 'delivery_verified': False}
-    return core._serialized(_initialize)(args, dispatch, **kwargs)
+    result = _initialize(args, dispatch, **kwargs)
+    # Save the complete selection even after partial external success. This is
+    # an inventory, never an instruction to replay stale cadence or recipients.
+    if result.get('selected_names'):
+        names = list(dict.fromkeys((saved or {}).get('names', []) + result['selected_names']))
+        core.write_text(path, json.dumps({'version': 1, 'names': names}, ensure_ascii=False) + '\n')
+    return result
+
+
+def routine_name(key):
+    suffix = hashlib.sha256(str(core.get_gtd_dir()).encode()).hexdigest()[:12]
+    return {'daily_reminder': 'gtd-daily-' + suffix,
+            'daily_summary': 'gtd-summary-' + suffix}.get(key, 'gtd-' + suffix + '-' + key)
 
 
 def _initialize(args, dispatch, **kwargs):
@@ -67,12 +127,10 @@ def _initialize(args, dispatch, **kwargs):
     except Exception as exc:
         return {'status': 'incomplete', 'jobs': [], 'error': str(exc), 'delivery_verified': False}
 
-    suffix = hashlib.sha256(str(core.get_gtd_dir()).encode()).hexdigest()[:12]
     for routine in routines:
         key, clock, instruction = routine['key'], routine['time'], routine['prompt']
         # Preserve names used by the earlier daily shortcuts.
-        name = {'daily_reminder': 'gtd-daily-' + suffix,
-                'daily_summary': 'gtd-summary-' + suffix}.get(key, 'gtd-' + suffix + '-' + key)
+        name = routine_name(key)
         entry = {'routine': key, 'name': name}
         try:
             existing = [job for job in jobs if job.get('name') == name]
@@ -107,6 +165,7 @@ def _initialize(args, dispatch, **kwargs):
             break
     complete = len(results) == len(routines) and all(r['status'] in {'created', 'existing'} for r in results)
     return {'status': 'ready' if complete else 'incomplete', 'timezone': actual_timezone,
+            'selected_names': [routine_name(r['key']) for r in routines],
             'jobs': results, 'delivery_verified': False}
 
 
