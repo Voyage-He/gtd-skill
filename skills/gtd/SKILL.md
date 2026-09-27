@@ -163,7 +163,7 @@ or other automatic startup mechanisms as part of this workflow.
 ## Tool Mapping
 
 - Unified recall and content/schedule CRUD: call `gtd_manage`; follow the response workflow above.
-- Initialize GTD: call `gtd_init`.
+- Initialize GTD: call `gtd_init`; it also fills missing daily reminder and summary jobs.
 - Capture an idea or task: call `gtd_capture` with `content`.
 - View the inbox: call `gtd_inbox`.
 - Process an inbox item: call `gtd_inbox_process` with `index` and one target.
@@ -297,6 +297,19 @@ never describe it as proof of delivery. Channel limits or unsupported sending
 must be reported; a local path alone is not a successful file return.
 
 ## Scheduled GTD Responses
+
+On initialization, `gtd_init` creates missing daily reminder (09:00) and daily
+summary (21:00) jobs in Hermes' current timezone, delivered to `origin` by default.
+Pass `reminder_time`, `summary_time`, `timezone`, or `deliver` when requested;
+the timezone must match Hermes. These routine prompts request a brief daily
+message, including when there are no recorded items. Existing jobs retain their
+time, recipient, prompt and pause state, including legacy daily reminders.
+Use `gtd_manage` to change existing jobs, not repeated initialization.
+For data-only setup or file repair use `setup_schedules=false`; it leaves jobs alone.
+Inspect `initialized` and `schedules` separately: `ok=false` can mean data is ready
+but scheduling failed or readback is uncertain. Report each incomplete part and
+retry initialization after fixing the cause; never claim delivery is verified.
+Plugin registration and web-server startup do not schedule jobs.
 
 Use `gtd_manage(target="schedule", ...)` to manage scheduled work as part of the
 unified response. Hermes performs the actual wakeup and delivery; the optional web

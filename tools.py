@@ -120,7 +120,7 @@ def _run(name: str, args: dict[str, Any] | None, operation: Operation) -> str:
         normalized = _validate_args(name, _coerce_args(args))
         payload = operation(normalized)
         message = payload.pop("message", "操作成功")
-        return _json_result(True, message, **payload)
+        return _json_result(payload.pop("ok", True), message, **payload)
     except SystemExit as exc:
         return _json_result(
             False,
@@ -142,14 +142,25 @@ def _run(name: str, args: dict[str, Any] | None, operation: Operation) -> str:
 
 
 def handle_init(args: dict[str, Any] | None = None, **kwargs: Any) -> str:
-    return _run(
-        "gtd_init",
-        args,
-        lambda _args: {
-            **core.init_gtd(),
-            "message": f"GTD 系统已初始化，目录: {core.get_gtd_dir()}",
-        },
-    )
+    return init_handler(None)(args, **kwargs)
+
+
+def init_handler(dispatch):
+    def handler(args: dict[str, Any] | None = None, **kwargs: Any) -> str:
+        def operation(data):
+            result = core.init_gtd()
+            schedules = reminders.initialize(data, dispatch, **kwargs)
+            complete = schedules['status'] != 'incomplete'
+            return {**result, 'ok': complete, 'initialized': True,
+                    **({} if complete else {'error': {'type': 'ScheduleInitializationError',
+                                                      'detail': '数据已保存；查看 schedules 中的调度错误'}}),
+                    'schedules': schedules,
+                    'message': f"GTD 数据已初始化，目录: {core.get_gtd_dir()}；" +
+                    {'ready': '常规调度已核实（已有任务保留原状态）；实际投递需要 Gateway 和渠道可用',
+                     'skipped': '已跳过常规调度',
+                     'incomplete': '常规调度未全部完成，请检查 schedules 后重试 gtd_init'}[schedules['status']]}
+        return _run('gtd_init', args, operation)
+    return handler
 
 
 def handle_capture(args: dict[str, Any] | None = None, **kwargs: Any) -> str:

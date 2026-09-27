@@ -3,10 +3,16 @@
 # ── gtd_init ──────────────────────────────────────────
 INIT = {
     "name": "gtd_init",
-    "description": "初始化 GTD Markdown 文件结构。默认使用 ~/gtd，也可通过 GTD_DIR 指向其他目录。该操作幂等，不会覆盖已有用户数据。",
+    "description": "初始化 GTD 数据并补齐每日提醒和每日总结的 Hermes cron 调度。幂等保留已有数据、调度时间、接收对象和暂停状态；setup_schedules=false 可仅初始化数据。默认目录 ~/gtd，可用 GTD_DIR 覆盖。",
     "parameters": {
         "type": "object",
-        "properties": {},
+        "properties": {
+            "setup_schedules": {"type": "boolean", "description": "默认 true，补齐常规调度；false 仅初始化数据"},
+            "reminder_time": {"type": "string", "description": "新建每日提醒时间 HH:MM，默认 09:00"},
+            "summary_time": {"type": "string", "description": "新建每日总结时间 HH:MM，默认 21:00"},
+            "timezone": {"type": "string", "description": "默认 Hermes 当前时区；显式指定时必须与运行环境一致"},
+            "deliver": {"type": "string", "description": "新建任务接收目标，默认 origin；或单个 platform:chat_id"},
+        },
         "required": [],
     },
 }

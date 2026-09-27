@@ -35,11 +35,35 @@ export GTD_DIR="/path/to/gtd"
 
 首次使用时让 Agent 执行“初始化 GTD”，插件会调用 `gtd_init` 幂等创建缺失文件，不会覆盖已有 Markdown 数据。
 
+初始化还会通过 Hermes cron 补齐两项常规安排，默认按 **Hermes 当前时区**执行：
+
+| 安排 | 默认时间 | 内容 |
+|---|---|---|
+| 每日提醒 | 每天 09:00 | 今日重点、逾期及即将截止事项、等待跟进、待整理数量 |
+| 每日总结 | 每天 21:00 | 今日已记录的进展、未完成事项、明日重点 |
+
+两项默认每天发送简短反馈；没有记录时如实说明。默认投递到初始化会话的 `origin`，
+也可用 `deliver` 指定一个 `platform:chat_id`。例如：
+
+```json
+{"reminder_time": "08:30", "summary_time": "22:00", "timezone": "Asia/Shanghai", "deliver": "telegram:123456"}
+```
+
+显式指定的时区必须与 Hermes 当前时区一致。重复初始化只补建缺失任务，保留已有任务
+的时间、提示词、接收对象与暂停状态；旧版 `gtd_reminder` 创建的每日提醒会直接复用。
+修改已存在的安排使用 `gtd_manage(target="schedule", action="update", ...)`。
+仅创建数据可传 `{"setup_schedules": false}`；这不会暂停或删除已有调度。
+
+返回中的 `initialized: true` 表示数据已就绪；`schedules.status` 为 `ready`、`skipped`
+或 `incomplete`。调度失败时返回 `ok: false`，保留已创建数据和成功的任务，逐项说明错误；
+修复运行环境或投递目标后再次初始化即可补齐，不应盲目手工重复创建。任务已登记并不等于
+已经投递成功，实际运行需要 Hermes Gateway、模型和渠道可用。插件加载和网页启动不会创建 cron。
+
 ## Tools
 
 | Tool | 典型说法 | 关键参数 |
 |------|----------|----------|
-| `gtd_init` | 初始化 GTD | 无 |
+| `gtd_init` | 初始化 GTD | 可选 `setup_schedules`, `reminder_time`, `summary_time`, `timezone`, `deliver` |
 | `gtd_capture` | 记录买牛奶 | `content` |
 | `gtd_inbox` | 看看收集箱 | 无 |
 | `gtd_inbox_process` | 把第 1 条整理成下一步行动 | `index`, `target`, 可选 `context`, `deadline`, `delegate`, `estimated`, `project_name`, `first_action` |

@@ -12,8 +12,8 @@ from tests.helpers import decode, temp_gtd_dir
 class GTDDataReliabilityTests(unittest.TestCase):
     def test_init_is_idempotent_and_stats_start_empty(self):
         with temp_gtd_dir() as gtd_dir:
-            first = decode(tools.handle_init({}))
-            second = decode(tools.handle_init({}))
+            first = decode(tools.handle_init({"setup_schedules": False}))
+            second = decode(tools.handle_init({"setup_schedules": False}))
             waiting = (gtd_dir / "waiting_for.md").read_text(encoding="utf-8")
             stats = decode(tools.handle_stats({}))
 
@@ -25,11 +25,11 @@ class GTDDataReliabilityTests(unittest.TestCase):
 
     def test_gtd_dir_is_resolved_per_call(self):
         with temp_gtd_dir() as first_dir:
-            decode(tools.handle_init({}))
+            decode(tools.handle_init({"setup_schedules": False}))
             decode(tools.handle_capture({"content": "first"}))
 
             with temp_gtd_dir() as second_dir:
-                decode(tools.handle_init({}))
+                decode(tools.handle_init({"setup_schedules": False}))
                 decode(tools.handle_capture({"content": "second"}))
 
                 self.assertIn("first", (first_dir / "inbox.md").read_text(encoding="utf-8"))
@@ -38,7 +38,7 @@ class GTDDataReliabilityTests(unittest.TestCase):
 
     def test_duplicate_inbox_entries_only_remove_selected_line(self):
         with temp_gtd_dir() as gtd_dir:
-            decode(tools.handle_init({}))
+            decode(tools.handle_init({"setup_schedules": False}))
             duplicate = "- [ ] 同一条目 (added: 2026-05-06 10:00)\n"
             (gtd_dir / "inbox.md").write_text(
                 "# 收集箱\n\n## 2026-05-06\n\n" + duplicate + duplicate,
@@ -59,7 +59,7 @@ class GTDDataReliabilityTests(unittest.TestCase):
 
     def test_invalid_inbox_index_preserves_files(self):
         with temp_gtd_dir() as gtd_dir:
-            decode(tools.handle_init({}))
+            decode(tools.handle_init({"setup_schedules": False}))
             decode(tools.handle_capture({"content": "保留我"}))
             before = {path.name: path.read_text(encoding="utf-8") for path in gtd_dir.glob("*.md")}
 
@@ -80,7 +80,7 @@ class GTDDataReliabilityTests(unittest.TestCase):
             "projects",
         ]
         with temp_gtd_dir():
-            decode(tools.handle_init({}))
+            decode(tools.handle_init({"setup_schedules": False}))
             for target in targets:
                 with self.subTest(target=target):
                     decode(tools.handle_capture({"content": f"item {target}"}))
@@ -101,7 +101,7 @@ class GTDDataReliabilityTests(unittest.TestCase):
 
     def test_complete_project_marks_status_and_stats_exclude_it(self):
         with temp_gtd_dir() as gtd_dir:
-            decode(tools.handle_init({}))
+            decode(tools.handle_init({"setup_schedules": False}))
             decode(tools.handle_capture({"content": "发布 Hermes 版本"}))
             project = decode(
                 tools.handle_inbox_process(
@@ -124,7 +124,7 @@ class GTDDataReliabilityTests(unittest.TestCase):
 
     def test_archive_only_completed_items_and_preserves_notes(self):
         with temp_gtd_dir() as gtd_dir:
-            decode(tools.handle_init({}))
+            decode(tools.handle_init({"setup_schedules": False}))
             (gtd_dir / "next_actions.md").write_text(
                 "# 下一步行动\n\n"
                 "## @电脑\n\n"
@@ -152,7 +152,7 @@ class GTDDataReliabilityTests(unittest.TestCase):
         tomorrow = today + timedelta(days=1)
 
         with temp_gtd_dir() as gtd_dir:
-            decode(tools.handle_init({}))
+            decode(tools.handle_init({"setup_schedules": False}))
             (gtd_dir / "inbox.md").write_text(
                 f"# 收集箱\n\n## {monday}\n\n- [ ] 本周新增 (added: {monday} 08:00)\n",
                 encoding="utf-8",
@@ -176,7 +176,7 @@ class GTDDataReliabilityTests(unittest.TestCase):
 
     def test_reference_init_and_add_memo_link_file_preserves_existing_data(self):
         with temp_gtd_dir() as gtd_dir:
-            decode(tools.handle_init({}))
+            decode(tools.handle_init({"setup_schedules": False}))
             (gtd_dir / "next_actions.md").write_text("keep action\n", encoding="utf-8")
             memo = decode(
                 tools.handle_reference_add(
@@ -205,7 +205,7 @@ class GTDDataReliabilityTests(unittest.TestCase):
                     }
                 )
             )
-            decode(tools.handle_init({}))
+            decode(tools.handle_init({"setup_schedules": False}))
 
             references = gtd_dir / "references"
             cards = list((references / "cards").glob("R*.md"))
@@ -227,7 +227,7 @@ class GTDDataReliabilityTests(unittest.TestCase):
 
     def test_reference_attachment_link_copy_and_missing_path(self):
         with temp_gtd_dir() as gtd_dir:
-            decode(tools.handle_init({}))
+            decode(tools.handle_init({"setup_schedules": False}))
             source_file = gtd_dir / "source.txt"
             source_file.write_text("hello", encoding="utf-8")
 
@@ -267,7 +267,7 @@ class GTDDataReliabilityTests(unittest.TestCase):
 
     def test_reference_search_is_metadata_only_and_supports_fields(self):
         with temp_gtd_dir() as gtd_dir:
-            decode(tools.handle_init({}))
+            decode(tools.handle_init({"setup_schedules": False}))
             binary_file = gtd_dir / "binary.bin"
             binary_file.write_bytes(b"\xff\xfe\x00\x00")
             added = decode(
@@ -305,7 +305,7 @@ class GTDDataReliabilityTests(unittest.TestCase):
 
     def test_reference_index_rebuilds_when_missing_before_upsert(self):
         with temp_gtd_dir() as gtd_dir:
-            decode(tools.handle_init({}))
+            decode(tools.handle_init({"setup_schedules": False}))
             first = decode(tools.handle_reference_add({"title": "旧资料", "note": "alpha"}))
             decode(tools.handle_reference_add({"title": "第二条", "note": "beta"}))
             (gtd_dir / "references" / "index.jsonl").unlink()
@@ -323,7 +323,7 @@ class GTDDataReliabilityTests(unittest.TestCase):
 
     def test_reference_index_rebuilds_when_corrupted(self):
         with temp_gtd_dir() as gtd_dir:
-            decode(tools.handle_init({}))
+            decode(tools.handle_init({"setup_schedules": False}))
             first = decode(tools.handle_reference_add({"title": "第一条", "note": "alpha"}))
             second = decode(tools.handle_reference_add({"title": "第二条", "note": "beta"}))
             index_path = gtd_dir / "references" / "index.jsonl"
@@ -342,7 +342,7 @@ class GTDDataReliabilityTests(unittest.TestCase):
 
     def test_reference_link_validation_and_explicit_read(self):
         with temp_gtd_dir() as gtd_dir:
-            decode(tools.handle_init({}))
+            decode(tools.handle_init({"setup_schedules": False}))
             text_file = gtd_dir / "readme.txt"
             text_file.write_text("0123456789", encoding="utf-8")
             added = decode(tools.handle_reference_add({"title": "可读附件", "file_path": str(text_file)}))
