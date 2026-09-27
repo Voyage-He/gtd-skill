@@ -18,6 +18,10 @@ class FakeHermesContext:
     def __init__(self) -> None:
         self.tools: list[dict] = []
         self.skills: list[tuple[str, Path]] = []
+        self.hooks = []
+
+    def register_hook(self, name, callback):
+        self.hooks.append((name, callback))
 
     def register_tool(self, **kwargs):
         self.tools.append(kwargs)

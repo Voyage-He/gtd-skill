@@ -15,6 +15,34 @@ Do not ask the user to choose an organization mode versus a notification mode.
 The tools below are execution primitives within this one response, not separate
 workflows that end immediately after one tool succeeds.
 
+### Current configuration applies to every GTD response
+
+Apply this skill to all personal task/reminder requests and their scheduled runs,
+including old cron jobs without a GTD label. The plugin installs a runtime routing
+policy; unrelated technical jobs and conversations remain outside GTD scope.
+Every `gtd_manage(action="review")` returns current `config`. Read and apply it
+before acting/responding; do not cache preferences from earlier turns or cron text.
+After changing config, read `gtd_config_get` again. A config read failure must be
+reported, never treated as permission to use defaults or send a routine digest.
+
+Use `notifications.daily_digest`, `notifications.deadline_reminder`,
+`notifications.waiting_followup` and `review.enabled` to gate their respective
+routine proactive messages. A direct query, error or required clarification still
+gets an answer. Apply review timing, work hours, preferred contexts and archive
+preferences where relevant. Current explicit user instructions take precedence;
+old saved cron instructions do not override newer preferences. Preferences do not
+create cron jobs on their own or authorize changing unrelated jobs or recipients.
+
+`response.verbosity` defaults to `concise`: report useful outcomes only, without
+process narration, tool logs, internal IDs, raw JSON, repeated background, receipts
+or generic advice. `detailed` allows relevant explanation; explicit user requests
+for detail take precedence. `response.silent_when_unchanged` defaults to `true`:
+a routine cron with nothing needing attention must return only `[SILENT]`.
+Internal housekeeping alone is not notification-worthy. An enabled, due reminder
+or an explicit every-occurrence reminder counts as needing attention even when
+data is unchanged. When this setting is false, a brief no-change result is allowed.
+Never hide failures or unanswered questions. Ordinary dialogue still gets a reply.
+
 ### Recall and review
 
 Start with `gtd_manage(action="review", query=..., ids=[...])`. Use the current
@@ -97,8 +125,9 @@ reminder fired, or silently mark “洗衣服” complete without evidence.
 
 Ordinary conversation requests still receive an answer, including requested query
 results or a brief no-change result. For a routine scheduled trigger with no new
-content/schedule change, no error and no new question, a message is optional: return
-only `[SILENT]` to use Hermes' delivery suppression. For example, an unchanged
+actionable reminder, user-relevant change, error or new question, follow
+`config.response.silent_when_unchanged` (default true): return only `[SILENT]`
+to use Hermes' delivery suppression. For example, an unchanged
 “今天要洗衣服了” trigger need not produce another message. If the user explicitly
 asked to receive every occurrence, deliver that reminder. Never include `[SILENT]`
 inside a substantive result, because Hermes suppresses the entire delivery when

@@ -220,7 +220,7 @@ CONFIG_GET = {
 # ── gtd_config_set ────────────────────────────────────
 CONFIG_SET = {
     "name": "gtd_config_set",
-    "description": "修改 GTD 配置项。支持点号分隔的嵌套键。",
+    "description": "修改 GTD 配置项，所有 GTD 对话和定时响应读取最新配置。支持点号分隔；response.verbosity 为 concise/detailed，response.silent_when_unchanged 为布尔值。偏好本身不创建定时任务。",
     "parameters": {
         "type": "object",
         "properties": {

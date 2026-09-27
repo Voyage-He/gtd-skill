@@ -63,6 +63,7 @@ DEFAULT_CONFIG = {
         "waiting_followup": True,
     },
     "auto_archive": True,
+    "response": {"verbosity": "concise", "silent_when_unchanged": True},
 }
 
 
@@ -1693,6 +1694,13 @@ def set_config(key: str, value: Any) -> dict[str, Any]:
     if not key:
         raise GTDValidationError("key 不能为空")
 
+    value = _coerce_config_value(value)
+    if key == "response.verbosity" and value not in ("concise", "detailed"):
+        raise GTDValidationError("response.verbosity 必须为 concise 或 detailed")
+    if key == "response.silent_when_unchanged" and not isinstance(value, bool):
+        raise GTDValidationError("response.silent_when_unchanged 必须为布尔值")
+    if key == "response":
+        raise GTDValidationError("请使用 response.verbosity 或 response.silent_when_unchanged 修改响应配置")
     config = load_config()
     current = config
     parts = key.split(".")

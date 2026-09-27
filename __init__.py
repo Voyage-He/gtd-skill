@@ -25,6 +25,11 @@ def register(ctx):
     if not SKILL_PATH.is_file():
         raise FileNotFoundError(f"Hermes GTD skill not found: {SKILL_PATH}")
     all_schemas, handlers, reminder_handler, manage_handler, init_handler = _load_runtime()
+    try:
+        from .gtd_policy import register_policy
+    except ImportError:
+        from gtd_policy import register_policy
+    register_policy(ctx)
     handlers = dict(handlers)
     handlers["gtd_init"] = init_handler(getattr(ctx, "dispatch_tool", None))
     handlers["gtd_reminder"] = reminder_handler(getattr(ctx, "dispatch_tool", None))
