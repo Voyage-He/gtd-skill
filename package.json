@@ -1,0 +1,42 @@
+{
+  "name": "hermes-gtd-plugin",
+  "version": "2.3.0",
+  "description": "Hermes Agent GTD plugin for Markdown tasks, reminders, materials and reviews",
+  "license": "MIT",
+  "author": "Voyage",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Voyage-He/gtd-skill.git"
+  },
+  "homepage": "https://github.com/Voyage-He/gtd-skill#readme",
+  "bugs": "https://github.com/Voyage-He/gtd-skill/issues",
+  "keywords": ["hermes", "hermes-agent", "gtd", "tasks", "reminders", "productivity"],
+  "files": [
+    "__init__.py",
+    "gtd_core.py",
+    "gtd_policy.py",
+    "gtd_response.py",
+    "materials.py",
+    "reminders.py",
+    "schemas.py",
+    "storage.py",
+    "tools.py",
+    "web_data.py",
+    "web_server.py",
+    "plugin.yaml",
+    "requirements.txt",
+    "skills/gtd/SKILL.md",
+    "web/app.js",
+    "web/index.html",
+    "web/style.css",
+    "scripts/check-package.cjs"
+  ],
+  "scripts": {
+    "test": "python3 -m unittest discover -s tests",
+    "prepack": "node scripts/check-package.cjs"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

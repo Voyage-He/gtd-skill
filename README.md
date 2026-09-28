@@ -4,6 +4,22 @@ Hermes Agent GTD 插件基于 Getting Things Done 方法论，通过 `gtd_*` too
 
 ## 安装
 
+### npm 分发包
+
+npm 包名为 `hermes-gtd-plugin`，Hermes 内的插件名仍为 `gtd`。首次发布后可安装：
+
+```bash
+npm install --global hermes-gtd-plugin@2.3.0
+mkdir -p ~/.hermes/plugins/gtd
+cp -R "$(npm root -g)/hermes-gtd-plugin/." ~/.hermes/plugins/gtd/
+hermes plugins enable gtd
+```
+
+然后重启 Hermes。npm 只分发插件代码，不会自动启用插件、创建提醒或修改 GTD 数据。
+本包是 Python 插件，不提供 JavaScript API 或 `npx` 命令。运行需要 Hermes 的 Python
+环境及插件 prompt section 或 `pre_llm_call` hook 接口；PyYAML 为可选依赖。
+更新前请按下方“重装与更新”停止进程并备份，再安装指定版本、复制并重启。
+
 ### 用户级插件
 
 ```bash
